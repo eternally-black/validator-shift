@@ -1,0 +1,60 @@
+# ----------------------------------------------------------------------------
+# ValidatorShift — local / self-hosted stack
+# Architecture reference: SOLSHIFT_Architecture.md §9.1
+# ----------------------------------------------------------------------------
+# Ports:
+#   3001 — Hub HTTP API (Fastify)
+#   3002 — Hub WebSocket relay
+#   3000 — Web UI (Next.js standalone)
+# ----------------------------------------------------------------------------
+
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    image: validator-shift/hub:local
+    container_name: validator-shift-hub
+    ports:
+      - "3001:3001"   # HTTP API
+      - "3002:3002"   # WebSocket
+    volumes:
+      - ./data:/app/data   # SQLite database (host-mounted for persistence)
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+    networks:
+      - validator-shift
+    # TODO(wave-3): enable healthcheck once packages/hub exposes GET /health.
+    # The Hub source currently has no /health endpoint and Wave 3 scope forbids
+    # editing packages/. Re-enable this block in Wave 4 / when the endpoint lands.
+    # healthcheck:
+    #   test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: validator-shift/web:local
+    container_name: validator-shift-web
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # Browser-facing WebSocket URL. Override for production (e.g. wss://your-domain:3002).
+      NEXT_PUBLIC_HUB_URL: ws://localhost:3002
+      # Server-side HTTP URL (resolved on the docker network via service name).
+      HUB_API_URL: http://hub:3001
+    depends_on:
+      - hub
+    restart: unless-stopped
+    networks:
+      - validator-shift
+
+networks:
+  validator-shift:
+    driver: bridge

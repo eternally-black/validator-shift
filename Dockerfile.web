@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1.7
+# ----------------------------------------------------------------------------
+# Dockerfile.web — @validator-shift/web
+# Next.js 15 with `output: 'standalone'` (see packages/web/next.config.js).
+# Multi-stage: deps  →  build  →  runtime (minimal, non-root)
+# ----------------------------------------------------------------------------
+
+# =============================================================================
+# Stage 1: deps — install workspace deps for a reproducible build
+# =============================================================================
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# libc6-compat is needed by some Next.js native dependencies on Alpine.
+RUN apk add --no-cache libc6-compat
+
+# Copy manifests first to leverage Docker's layer cache.
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/web/package.json    ./packages/web/package.json
+# Other workspace manifests are required for `npm ci` to resolve the graph.
+COPY packages/hub/package.json    ./packages/hub/package.json
+COPY packages/agent/package.json  ./packages/agent/package.json
+
+RUN npm ci
+
+# =============================================================================
+# Stage 2: build — produce .next/standalone + .next/static
+# =============================================================================
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json /app/package-lock.json ./
+
+# Source needed for compilation.
+COPY tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY packages/web    ./packages/web
+
+# Disable Next.js telemetry during the build.
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+# `output: 'standalone'` (already configured) writes a self-contained server
+# bundle to packages/web/.next/standalone, which we copy into the runtime stage.
+RUN npm run build -w @validator-shift/web
+
+# =============================================================================
+# Stage 3: runtime — minimal Alpine, non-root, only the standalone bundle
+# =============================================================================
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+RUN apk add --no-cache tini libc6-compat
+
+# Defaults wired for the docker-compose network (service name `hub`).
+# Override these at deploy time when running outside compose:
+#   NEXT_PUBLIC_HUB_URL → browser-facing WebSocket URL (must be reachable by clients)
+#   HUB_API_URL         → server-side HTTP URL used by Next.js server components
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0 \
+    NEXT_PUBLIC_HUB_URL=ws://hub:3002 \
+    HUB_API_URL=http://hub:3001
+
+# Non-root user matching Next.js convention (uid/gid 1001).
+RUN addgroup -g 1001 -S nextjs \
+ && adduser  -u 1001 -S nextjs -G nextjs
+
+# Standalone output already includes a minimal node_modules tree and server.js.
+# The standalone copy preserves the workspace path layout, so the entrypoint is
+# packages/web/server.js — we cd into that directory at runtime.
+COPY --from=build --chown=nextjs:nextjs /app/packages/web/.next/standalone ./
+COPY --from=build --chown=nextjs:nextjs /app/packages/web/.next/static     ./packages/web/.next/static
+# `public/` is optional; if it doesn't exist this COPY is omitted on purpose.
+# Add it back here once packages/web/public/ exists.
+# COPY --from=build --chown=nextjs:nextjs /app/packages/web/public ./packages/web/public
+
+USER nextjs
+
+EXPOSE 3000
+
+WORKDIR /app/packages/web
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]

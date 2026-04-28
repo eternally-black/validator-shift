@@ -1,0 +1,49 @@
+# Dependencies (re-installed inside the image to match the target platform/arch)
+node_modules
+**/node_modules
+
+# Build artifacts (recreated inside the build stage)
+dist
+**/dist
+.next
+**/.next
+
+# Version control
+.git
+.gitignore
+
+# Editor/agent metadata
+.claude
+**/.claude
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Logs
+*.log
+**/*.log
+npm-debug.log*
+
+# Local data (SQLite DB lives in a mounted volume — never bake into the image)
+data/
+
+# Test coverage reports
+coverage/
+**/coverage
+
+# OS / IDE noise
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Local env overrides — never copy secrets into images
+.env
+.env.local
+.env.*.local
+
+# Docker artifacts themselves shouldn't end up in the build context
+Dockerfile*
+docker-compose*.yml
+.dockerignore

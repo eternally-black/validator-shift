@@ -1,0 +1,96 @@
+# syntax=docker/dockerfile:1.7
+# ----------------------------------------------------------------------------
+# Dockerfile.hub — @validator-shift/hub
+# Fastify + better-sqlite3 (native module → needs python/make/g++ at build time)
+# Multi-stage: deps  →  build  →  runtime (slim, non-root)
+# ----------------------------------------------------------------------------
+
+# =============================================================================
+# Stage 1: deps — install ALL workspace deps (incl. dev) for a reproducible build
+# =============================================================================
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Native toolchain required to compile better-sqlite3 from source.
+# Discarded entirely — this stage never reaches the runtime image.
+RUN apk add --no-cache python3 make g++ libc6-compat
+
+# Copy only manifests first so this layer caches until a package.json changes.
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/hub/package.json    ./packages/hub/package.json
+# agent + web manifests are copied so `npm ci` can resolve the full workspace
+# graph; their source code is never copied into the hub image.
+COPY packages/agent/package.json  ./packages/agent/package.json
+COPY packages/web/package.json    ./packages/web/package.json
+
+# Deterministic install honoring the lockfile across all workspaces.
+RUN npm ci
+
+# =============================================================================
+# Stage 2: build — compile shared + hub TS to JS (dist/)
+# =============================================================================
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# Reuse fully-resolved node_modules from deps (avoids a second native rebuild).
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json /app/package-lock.json ./
+
+# Source needed for compilation.
+COPY tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY packages/hub    ./packages/hub
+
+# Emit JS into each package's dist/. `npx tsc` uses the local TS from node_modules.
+RUN npx tsc -p packages/shared/tsconfig.json \
+ && npx tsc -p packages/hub/tsconfig.json
+
+# =============================================================================
+# Stage 3: runtime — slim, production-only deps, non-root
+# =============================================================================
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+# wget is part of busybox in alpine — used by the docker-compose healthcheck.
+# tini gives us proper PID 1 signal handling for graceful shutdown.
+RUN apk add --no-cache tini libc6-compat
+
+ENV NODE_ENV=production \
+    PORT=3001 \
+    WS_PORT=3002
+
+# Non-root user (uid/gid 1001) — never run Node as root in production.
+RUN addgroup -g 1001 -S nodejs \
+ && adduser  -u 1001 -S nodejs -G nodejs
+
+# Copy manifests, then install ONLY production deps. better-sqlite3 ships a
+# prebuilt binary for node-20-alpine-x64/arm64, so no compiler is needed here.
+COPY --chown=nodejs:nodejs package.json package-lock.json ./
+COPY --chown=nodejs:nodejs packages/shared/package.json ./packages/shared/package.json
+COPY --chown=nodejs:nodejs packages/hub/package.json    ./packages/hub/package.json
+COPY --chown=nodejs:nodejs packages/agent/package.json  ./packages/agent/package.json
+COPY --chown=nodejs:nodejs packages/web/package.json    ./packages/web/package.json
+
+# Fallback: if no prebuild is available, rebuild from source. Build-deps are
+# installed and removed in the same RUN so they never persist as a layer.
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+ && npm ci --omit=dev \
+ && apk del .build-deps \
+ && npm cache clean --force
+
+# Copy compiled output from the build stage.
+COPY --from=build --chown=nodejs:nodejs /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=nodejs:nodejs /app/packages/hub/dist    ./packages/hub/dist
+
+# SQLite database lives on a mounted volume, owned by the runtime user.
+RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
+VOLUME ["/app/data"]
+
+USER nodejs
+
+EXPOSE 3001 3002
+
+# tini → node ensures SIGTERM propagates to the Fastify process.
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "packages/hub/dist/index.js"]
