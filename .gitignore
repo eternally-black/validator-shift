@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+*.db
+.DS_Store
+.next
+build/
+coverage/
+*.log
+.claude/
