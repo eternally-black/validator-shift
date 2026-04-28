@@ -8,3 +8,4 @@ build/
 coverage/
 *.log
 .claude/
+*.tsbuildinfo
