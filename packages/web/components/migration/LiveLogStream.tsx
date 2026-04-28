@@ -38,10 +38,7 @@ function levelColor(level: LogEntry['level']): string {
 }
 
 export function LiveLogStream() {
-  // Subscribe only to logs slice (rerender-defer-reads).
-  const logs = useSessionStore(
-    (s) => (s as unknown as { logs: LogEntry[] }).logs,
-  )
+  const logs = useSessionStore((s) => s.logs)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const stickyRef = useRef<boolean>(true)
@@ -79,7 +76,10 @@ export function LiveLogStream() {
           <div className="text-zinc-600">— waiting for log entries —</div>
         )}
         {logs?.map((entry, i) => (
-          <div key={i} className="whitespace-pre-wrap break-words">
+          <div
+            key={`${entry.ts}-${entry.agent}-${i}`}
+            className="whitespace-pre-wrap break-words"
+          >
             <span className="text-zinc-500">{`<${formatTime(entry.ts)}>`}</span>{' '}
             <span className={agentColor(entry.agent)}>{`[${entry.agent}]`}</span>{' '}
             <span className={levelColor(entry.level)}>

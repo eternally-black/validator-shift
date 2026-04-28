@@ -24,15 +24,12 @@ export default function MigratePage() {
       hubWsUrl: HUB_WS_URL,
     })
 
-    const store = useSessionStore.getState()
-    store.attachClient(client)
     const unwire = wireClientToStore(client, useSessionStore)
     client.connect()
 
     return () => {
       client.disconnect()
       unwire?.()
-      useSessionStore.getState().detachClient()
     }
   }, [sessionId])
 
@@ -42,12 +39,12 @@ export default function MigratePage() {
   const backToStep2 = useCallback(() => setStep(2), [])
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl py-10">
       <WizardShell currentStep={step}>
         {step === 1 && <Step1Configure onNext={goToStep2} />}
         {step === 2 && <Step2Connect onNext={goToStep3} onBack={goToStep1} />}
         {step === 3 && <Step3Preflight onBack={backToStep2} />}
       </WizardShell>
-    </main>
+    </div>
   )
 }

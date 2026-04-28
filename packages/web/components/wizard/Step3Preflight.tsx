@@ -1,8 +1,10 @@
 'use client'
 
-import { useCallback, useMemo } from 'react'
+import { useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Card, StatusDot } from '@/components/ui'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
+import { StatusDot } from '@/components/ui/StatusDot'
 import { useSessionStore } from '@/lib/store'
 
 interface Step3Props {
@@ -23,7 +25,7 @@ export function Step3Preflight({ onBack }: Step3Props) {
     router.push(`/session/${session.id}`)
   }, [allOk, session, router])
 
-  const checks = useMemo(() => preflight ?? [], [preflight])
+  const checks = preflight ?? []
 
   return (
     <div className="flex flex-col gap-6">

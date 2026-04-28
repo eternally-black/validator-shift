@@ -20,6 +20,8 @@ const isDev =
   process.env &&
   process.env.NODE_ENV === 'development'
 
+const LOG_BUFFER_LIMIT = 1000
+
 export interface SessionStoreState {
   session: Session | null
   state: MigrationState
@@ -118,7 +120,14 @@ export const useSessionStore: UseBoundStore<StoreApi<SessionStoreState>> =
         return { steps: next }
       }),
 
-    appendLog: (entry) => set((s) => ({ logs: [...s.logs, entry] })),
+    appendLog: (entry) =>
+      set((s) => {
+        const next = s.logs.length >= LOG_BUFFER_LIMIT
+          ? s.logs.slice(-LOG_BUFFER_LIMIT + 1)
+          : s.logs.slice()
+        next.push(entry)
+        return { logs: next }
+      }),
 
     setSas: (sas) => set({ sas }),
 

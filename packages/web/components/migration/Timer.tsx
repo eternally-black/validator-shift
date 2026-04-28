@@ -21,7 +21,6 @@ export function Timer({ startedAt }: TimerProps) {
 
   useEffect(() => {
     if (startedAt === null) return
-    setNow(Date.now())
     const interval = setInterval(() => {
       setNow(Date.now())
     }, 1000)

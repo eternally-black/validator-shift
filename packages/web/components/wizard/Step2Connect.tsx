@@ -11,13 +11,11 @@ interface Step2Props {
 }
 
 export function Step2Connect({ onNext, onBack }: Step2Props) {
-  const session = useSessionStore((s) => s.session)
-  const agents = useSessionStore((s) => s.agents)
+  const sessionCode = useSessionStore((s) => s.session?.code ?? null)
+  const sourceConnected = useSessionStore((s) => s.agents.source.connected)
+  const targetConnected = useSessionStore((s) => s.agents.target.connected)
   const state = useSessionStore((s) => s.state)
   const sas = useSessionStore((s) => s.sas)
-
-  const sourceConnected = agents?.source.connected ?? false
-  const targetConnected = agents?.target.connected ?? false
 
   const handleMatch = useCallback(() => {
     useSessionStore.getState().dispatch({ type: 'dashboard:confirm_sas' })
@@ -31,7 +29,7 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
     onBack()
   }, [onBack])
 
-  if (!session) {
+  if (!sessionCode) {
     return (
       <Card>
         <p className="text-sm text-neutral-400">No active session. Return to step 1.</p>
@@ -53,7 +51,7 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
           <h2 className="text-sm font-mono uppercase tracking-wider text-neutral-400">
             Session Code
           </h2>
-          <CodeBlock>{session.code}</CodeBlock>
+          <CodeBlock>{sessionCode}</CodeBlock>
           <p className="text-sm text-neutral-400">
             Run the agent on both servers using the code above.
           </p>
@@ -67,11 +65,11 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
           </h2>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-neutral-500">Source server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role source --session ${session.code}`}</CodeBlock>
+            <CodeBlock>{`npx @validator-shift/agent --role source --session ${sessionCode}`}</CodeBlock>
           </div>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-neutral-500">Target server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role target --session ${session.code}`}</CodeBlock>
+            <CodeBlock>{`npx @validator-shift/agent --role target --session ${sessionCode}`}</CodeBlock>
           </div>
         </div>
       </Card>
