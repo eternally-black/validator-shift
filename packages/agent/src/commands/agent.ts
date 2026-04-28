@@ -5,6 +5,9 @@ import {
   writeFileSync,
   existsSync,
   readdirSync,
+  openSync,
+  fsyncSync,
+  closeSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -43,9 +46,11 @@ import {
   printBanner,
   printPreflightTable,
   confirmSAS,
+  confirmDestructive,
   printStepProgress,
   printError,
   printLog,
+  redactSecrets,
 } from '../ui/terminal.js'
 
 export interface AgentOpts {
@@ -55,6 +60,16 @@ export interface AgentOpts {
   ledger: string
   keypair?: string
   unstakedKeypair?: string
+  /**
+   * Base58 pubkey of the running validator's --identity. Required on source.
+   * Avoids relying on `solana address` which returns the operator's default
+   * CLI keypair (NOT necessarily the running validator's identity).
+   */
+  identityPubkey?: string
+  /** Pass --skip-new-snapshot-check to wait-for-restart-window. Default: false. */
+  skipSnapshotCheck?: boolean
+  /** Skip operator confirmation prompts for destructive operations. */
+  yes?: boolean
 }
 
 interface PendingPayload {
@@ -65,6 +80,11 @@ interface PendingPayload {
 const STEP_LABELS: Record<number, string> = Object.fromEntries(
   MIGRATION_STEPS.map(s => [s.number, s.name]),
 )
+
+// Window we wait for the source to drop out of voting before activating target.
+const SOURCE_QUIET_TIMEOUT_MS = 60_000
+// Window source waits for target's voting_confirmed before allowing wipe.
+const VOTING_CONFIRMED_TIMEOUT_MS = 60_000
 
 function nowMs(): number {
   return Date.now()
@@ -87,9 +107,10 @@ function errorMessage(err: unknown): string {
 }
 
 function logBoth(client: HubClient, level: 'info' | 'warn' | 'error', message: string): void {
-  printLog(level, message)
+  const safe = redactSecrets(message)
+  printLog(level, safe)
   try {
-    client.send({ type: 'agent:log', level, message })
+    client.send({ type: 'agent:log', level, message: safe })
   } catch {
     // socket may not be open during error paths; printLog already happened
   }
@@ -100,6 +121,10 @@ function logBoth(client: HubClient, level: 'info' | 'warn' | 'error', message: s
  */
 export async function runAgent(opts: AgentOpts): Promise<void> {
   printBanner()
+
+  // Track temp files we've created so we can secure-wipe on exit.
+  const tmpFilesToWipe = new Set<string>()
+  installCleanupHooks(tmpFilesToWipe)
 
   // ----- Pairing: generate ephemeral X25519 keys -----
   const ourKp = generateKeyPair()
@@ -117,6 +142,7 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
     printError(
       'CRITICAL: connection lost during migration. Manual intervention required. See logs.',
     )
+    runCleanup(tmpFilesToWipe)
     process.exit(2)
   })
 
@@ -127,15 +153,16 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
     } catch {
       // ignore
     }
+    runCleanup(tmpFilesToWipe)
     process.exit(0)
   })
 
   client.on('error', (err: unknown) => {
-    printLog('error', `transport error: ${errorMessage(err)}`)
+    printLog('error', `transport error: ${redactSecrets(errorMessage(err))}`)
   })
 
   client.on('protocol_error', (err: unknown) => {
-    printLog('error', `protocol error: ${errorMessage(err)}`)
+    printLog('error', `protocol error: ${redactSecrets(errorMessage(err))}`)
   })
 
   client.on('timeout', () => {
@@ -145,11 +172,14 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
   // ----- State for migration session -----
   let sessionKey: Uint8Array | null = null
   let pendingPayload: PendingPayload | null = null
-  // For target: after step 5 we'll know where we wrote the staked keypair.
   let receivedStakedKeypairPath: string | null = null
-  // For target: tower file destination path (set when the source filename arrives via step 4).
-  // Source decides the filename based on staked pubkey; we encode it inside the encrypted payload.
   let receivedTowerFilePath: string | null = null
+  // CR-1: target needs to know source identity pubkey to verify it stops voting.
+  // Source already knows it from --identity-pubkey; target learns it from step 5 payload.
+  let sourceIdentityPubkey: string | null =
+    opts.role === 'source' ? (opts.identityPubkey ?? null) : null
+  // CR-2: source must wait for target to confirm voting before wiping the keypair.
+  let peerVotingConfirmed = false
 
   client.setStage('pairing')
   await client.connect()
@@ -169,6 +199,7 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
       // ignore
     }
     printError('SAS mismatch')
+    runCleanup(tmpFilesToWipe)
     process.exit(1)
   }
 
@@ -189,13 +220,31 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
   // ----- Migrating loop -----
   client.setStage('migrating')
 
-  // Listen for relayed payloads from peer (used for steps 4 and 5 on target).
+  // Listen for relayed payloads from peer. We peek at the kind to dispatch
+  // voting_confirmed envelopes (which never reach the step handler) separately
+  // from tower / identity payloads (which do).
   client.on('hub:relay_payload', (msg: { payload: string; hash: string }) => {
+    if (sessionKey) {
+      try {
+        const decoded = decodePayload(msg.payload)
+        const plaintext = decrypt(decoded.ciphertext, decoded.nonce, sessionKey)
+        const json = new TextDecoder().decode(plaintext)
+        const meta = JSON.parse(json) as { kind?: string }
+        if (meta?.kind === 'voting_confirmed') {
+          peerVotingConfirmed = true
+          logBoth(client, 'info', 'peer confirmed voting active')
+          return
+        }
+      } catch {
+        // Not a peek-able envelope (e.g. corruption / wrong key) — fall through
+        // and let the step handler surface the error when it tries to consume.
+      }
+    }
     pendingPayload = { payload: msg.payload, hash: msg.hash }
   })
 
-  // Rollback signal — we still expect Hub to send execute_step messages for
-  // rollback semantics; this is just for logging.
+  // Rollback signal — Hub continues to drive execute_step messages for the
+  // recovery flow; this is just for logging.
   client.on('hub:rollback', () => {
     logBoth(client, 'warn', 'hub requested rollback')
   })
@@ -218,23 +267,31 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
             },
             setReceivedStakedKeypairPath: (p: string) => {
               receivedStakedKeypairPath = p
+              tmpFilesToWipe.add(p)
             },
             getReceivedStakedKeypairPath: () => receivedStakedKeypairPath,
             setReceivedTowerFilePath: (p: string) => {
               receivedTowerFilePath = p
             },
             getReceivedTowerFilePath: () => receivedTowerFilePath,
+            setSourceIdentityPubkey: (p: string) => {
+              sourceIdentityPubkey = p
+            },
+            getSourceIdentityPubkey: () => sourceIdentityPubkey,
+            getPeerVotingConfirmed: () => peerVotingConfirmed,
+            registerTmpFile: (p: string) => tmpFilesToWipe.add(p),
+            unregisterTmpFile: (p: string) => tmpFilesToWipe.delete(p),
           })
 
           const stepResult: StepResult = {
             ok: true,
-            output: result,
+            output: result ? redactSecrets(result) : undefined,
             durationMs: nowMs() - startedAt,
           }
           client.send({ type: 'agent:step_complete', step, result: stepResult })
           logBoth(client, 'info', `step ${step} (${label}) complete`)
         } catch (err) {
-          const message = errorMessage(err)
+          const message = redactSecrets(errorMessage(err))
           logBoth(client, 'error', `step ${step} (${label}) failed: ${message}`)
           try {
             client.send({ type: 'agent:step_failed', step, error: message })
@@ -246,12 +303,38 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
       })()
     })
 
-    // Keep the promise pending — exit happens via process.exit on critical
-    // events or session_cancelled. For a clean completion the operator (Hub)
-    // is expected to send session_cancelled or close the socket; ignore the
-    // unused `resolve` until then.
     void resolve
   })
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
+function runCleanup(tmpFiles: Set<string>): void {
+  for (const path of tmpFiles) {
+    try {
+      // Best-effort secure wipe; fire-and-forget since we may be in a SIGINT path.
+      void secureWipe(path).catch(() => {
+        /* ignore */
+      })
+    } catch {
+      /* ignore */
+    }
+  }
+  tmpFiles.clear()
+}
+
+function installCleanupHooks(tmpFiles: Set<string>): void {
+  const handler = (signal: NodeJS.Signals) => {
+    runCleanup(tmpFiles)
+    // Use signal-conventional exit codes (128 + signum).
+    const code = signal === 'SIGINT' ? 130 : 143
+    process.exit(code)
+  }
+  process.once('SIGINT', () => handler('SIGINT'))
+  process.once('SIGTERM', () => handler('SIGTERM'))
+  process.once('beforeExit', () => runCleanup(tmpFiles))
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +353,6 @@ function waitForPeer(client: HubClient): Promise<Uint8Array> {
 async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
   const checks: PreflightCheck[] = []
 
-  // 1) solana CLI installed
   try {
     const { stdout } = await runSolanaCli(['--version'])
     checks.push({
@@ -286,30 +368,22 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
     })
   }
 
-  // 2) validator process running (best-effort)
-  let identityFromGossip: string | null = null
+  // validator process running — use explicit identityPubkey when provided.
   try {
-    const info = await getValidatorInfo()
+    const info = await getValidatorInfo(opts.identityPubkey)
     const ok = !!info.identityPubkey
-    identityFromGossip = ok ? info.identityPubkey : null
     checks.push({
       name: 'validator process running',
       ok,
       detail: ok ? `identity=${info.identityPubkey.slice(0, 8)}…` : 'no identity detected',
     })
-
-    // 3) caught up
     checks.push({
       name: 'validator caught up',
       ok: info.isCaughtUp,
       detail: info.isCaughtUp ? undefined : 'not present in gossip',
     })
   } catch (err) {
-    checks.push({
-      name: 'validator process running',
-      ok: false,
-      detail: errorMessage(err),
-    })
+    checks.push({ name: 'validator process running', ok: false, detail: errorMessage(err) })
     checks.push({
       name: 'validator caught up',
       ok: false,
@@ -318,7 +392,6 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
   }
 
   if (opts.role === 'source') {
-    // 4) identity keypair accessible
     if (opts.keypair) {
       try {
         accessSync(opts.keypair, fsConstants.R_OK)
@@ -338,17 +411,27 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
       })
     }
 
-    // 5) vote account matches identity — TODO: requires comparing
-    // `solana validators` voteAccountPubkey to a configured value or to the
-    // running validator's --vote-account flag. Skip for now.
-    void identityFromGossip
-    checks.push({
-      name: 'vote account matches identity',
-      ok: true,
-      detail: 'skipped (TODO: implement vote-account match)',
-    })
+    // Vote-account match — verifies the keypair we have IS the validator's identity
+    // by deriving the pubkey and comparing to --identity-pubkey.
+    if (opts.keypair && opts.identityPubkey) {
+      try {
+        const bytes = readKeypair(opts.keypair)
+        const derived = derivePubkey(bytes)
+        const ok = derived === opts.identityPubkey
+        checks.push({
+          name: 'keypair matches --identity-pubkey',
+          ok,
+          detail: ok ? undefined : `keypair=${derived.slice(0, 8)}… vs flag=${opts.identityPubkey.slice(0, 8)}…`,
+        })
+      } catch (err) {
+        checks.push({
+          name: 'keypair matches --identity-pubkey',
+          ok: false,
+          detail: errorMessage(err),
+        })
+      }
+    }
   } else {
-    // target-only: ledger path exists & writable
     try {
       accessSync(opts.ledger, fsConstants.W_OK)
       checks.push({ name: 'ledger path exists & writable', ok: true })
@@ -372,6 +455,11 @@ interface StepCtx {
   getReceivedStakedKeypairPath: () => string | null
   setReceivedTowerFilePath: (p: string) => void
   getReceivedTowerFilePath: () => string | null
+  setSourceIdentityPubkey: (p: string) => void
+  getSourceIdentityPubkey: () => string | null
+  getPeerVotingConfirmed: () => boolean
+  registerTmpFile: (p: string) => void
+  unregisterTmpFile: (p: string) => void
 }
 
 async function executeStep(
@@ -384,41 +472,40 @@ async function executeStep(
 
   switch (step) {
     case 1: {
-      // wait for restart window — source only
       if (role !== 'source') return 'noop (target waits)'
       await waitForRestartWindow(opts.ledger, {
         minIdleTime: 2,
-        skipNewSnapshotCheck: true,
+        skipNewSnapshotCheck: opts.skipSnapshotCheck === true,
       })
       return 'restart window reached'
     }
 
     case 2: {
-      // set unstaked identity on SOURCE
       if (role !== 'source') return 'noop (target waits)'
-      const unstakedPath = ensureUnstakedKeypair(opts)
+      if (!opts.yes) {
+        const ok = await confirmDestructive(
+          `Set unstaked identity on SOURCE (ledger=${opts.ledger})? Validator will stop signing with the staked identity.`,
+        )
+        if (!ok) throw new Error('operator declined step 2')
+      }
+      const unstakedPath = ensureUnstakedKeypair(opts, ctx)
       await setIdentity(opts.ledger, unstakedPath)
-      return `set-identity unstaked=${unstakedPath}`
+      return 'set-identity unstaked'
     }
 
     case 3: {
-      // remove authorized voters on SOURCE
       if (role !== 'source') return 'noop (target waits)'
       await removeAllAuthorizedVoters(opts.ledger)
       return 'authorized-voter remove-all'
     }
 
     case 4: {
-      // tower file transfer
       if (role === 'source') {
-        if (!opts.keypair) {
-          throw new Error('source --keypair required to locate tower file')
-        }
+        if (!opts.keypair) throw new Error('source --keypair required to locate tower file')
         const stakedBytes = readKeypair(opts.keypair)
         const stakedPubkey = derivePubkey(stakedBytes)
         const towerPath = pathJoin(opts.ledger, `tower-1_9-${stakedPubkey}.bin`)
         if (!existsSync(towerPath)) {
-          // Best-effort fallback: try to discover any tower-1_9-*.bin file.
           let found: string | null = null
           try {
             const entries = readdirSync(opts.ledger)
@@ -427,15 +514,11 @@ async function executeStep(
           } catch {
             // ignore
           }
-          if (!found) {
-            throw new Error(`tower file not found at ${towerPath}`)
-          }
-          // Use the discovered file.
+          if (!found) throw new Error(`tower file not found at ${towerPath}`)
           return await sendTowerFile(client, ctx, found, stakedPubkey)
         }
         return await sendTowerFile(client, ctx, towerPath, stakedPubkey)
       } else {
-        // target: receive tower file
         const pending = await waitForPending(ctx)
         const decryptedJson = decryptPending(pending, ctx.sessionKey)
         const meta = JSON.parse(decryptedJson) as {
@@ -448,14 +531,27 @@ async function executeStep(
         }
         const fileBytes = Buffer.from(meta.contentB64, 'base64')
         const dest = pathJoin(opts.ledger, meta.filename)
-        // Verify hash claimed in protocol matches the inner content.
         const expectedHash = sha256Hex(fileBytes)
         if (expectedHash !== pending.hash) {
           throw new Error(
             `tower hash mismatch: expected=${expectedHash} got=${pending.hash}`,
           )
         }
-        writeFileSync(dest, fileBytes, { mode: 0o600 })
+        // H-2: write + fsync, then read-back and re-verify hash on disk.
+        const fd = openSync(dest, 'w', 0o600)
+        try {
+          writeFileSync(fd, fileBytes)
+          fsyncSync(fd)
+        } finally {
+          closeSync(fd)
+        }
+        const onDisk = readFileSync(dest)
+        const onDiskHash = sha256Hex(onDisk)
+        if (onDiskHash !== expectedHash) {
+          throw new Error(
+            `tower file corrupted on disk: expected=${expectedHash} read=${onDiskHash}`,
+          )
+        }
         ctx.setReceivedTowerFilePath(dest)
         ctx.clearPending()
         return `tower written to ${dest}`
@@ -463,17 +559,13 @@ async function executeStep(
     }
 
     case 5: {
-      // identity keypair transfer
       if (role === 'source') {
-        if (!opts.keypair) {
-          throw new Error('source --keypair required for step 5')
-        }
+        if (!opts.keypair) throw new Error('source --keypair required for step 5')
         const stakedBytes = readKeypair(opts.keypair)
         const stakedPubkey = derivePubkey(stakedBytes)
         const meta = JSON.stringify({
           kind: 'identity',
           pubkey: stakedPubkey,
-          // 64-byte secret key as JSON-array (Solana keypair format).
           secretKeyBytes: Array.from(stakedBytes.values()),
         })
         const plaintext = new TextEncoder().encode(meta)
@@ -484,9 +576,8 @@ async function executeStep(
           payload: encodePayload(enc),
           hash,
         })
-        return `identity sent (pubkey=${stakedPubkey.slice(0, 8)}…)`
+        return 'identity sent'
       } else {
-        // target: receive identity keypair
         const pending = await waitForPending(ctx)
         const json = decryptPending(pending, ctx.sessionKey)
         const meta = JSON.parse(json) as {
@@ -499,72 +590,140 @@ async function executeStep(
         }
         const secretBuf = Buffer.from(meta.secretKeyBytes)
         const expectedHash = sha256Hex(secretBuf)
-        if (expectedHash !== pending.hash) {
-          throw new Error('identity keypair hash mismatch')
-        }
+        if (expectedHash !== pending.hash) throw new Error('identity keypair hash mismatch')
         const derived = derivePubkey(secretBuf)
         if (derived !== meta.pubkey) {
-          throw new Error(
-            `identity pubkey mismatch: derived=${derived} expected=${meta.pubkey}`,
-          )
+          throw new Error('identity pubkey mismatch')
         }
         const tmpPath = pathJoin(tmpdir(), `staked-${nanoid(8)}.json`)
         writeKeypair(tmpPath, secretBuf)
         ctx.setReceivedStakedKeypairPath(tmpPath)
+        ctx.setSourceIdentityPubkey(meta.pubkey)
         ctx.clearPending()
-        return `identity written to ${tmpPath}`
+        return 'identity stored'
       }
     }
 
     case 6: {
-      // set staked identity on TARGET
       if (role !== 'target') return 'noop (source waits)'
       const stakedPath = ctx.getReceivedStakedKeypairPath()
-      if (!stakedPath) {
-        throw new Error('staked keypair not received before step 6')
+      if (!stakedPath) throw new Error('staked keypair not received before step 6')
+      const sourcePk = ctx.getSourceIdentityPubkey()
+      if (!sourcePk) {
+        throw new Error('source identity pubkey unknown — refusing to activate without anti-dual-identity check')
+      }
+      // CR-1: poll gossip / validators until source has stopped voting.
+      // This is the critical anti-dual-identity gate.
+      await waitForSourceQuiet(sourcePk, SOURCE_QUIET_TIMEOUT_MS)
+      if (!opts.yes) {
+        const ok = await confirmDestructive(
+          `Activate staked identity on TARGET (ledger=${opts.ledger}, identity=${sourcePk.slice(0, 8)}…)? Source has been verified inactive.`,
+        )
+        if (!ok) throw new Error('operator declined step 6')
       }
       await setIdentity(opts.ledger, stakedPath)
-      return `set-identity staked=${stakedPath}`
+      return 'set-identity staked'
     }
 
     case 7: {
-      // add authorized voter on TARGET
       if (role !== 'target') return 'noop (source waits)'
       const stakedPath = ctx.getReceivedStakedKeypairPath()
-      if (!stakedPath) {
-        throw new Error('staked keypair path missing for step 7')
-      }
+      if (!stakedPath) throw new Error('staked keypair path missing for step 7')
       await addAuthorizedVoter(opts.ledger, stakedPath)
       return 'authorized-voter add'
     }
 
     case 8: {
-      // verification on TARGET
       if (role !== 'target') return 'noop (source waits)'
-      const info = await getValidatorInfo()
+      const sourcePk = ctx.getSourceIdentityPubkey()
+      // Verify TARGET is now voting under the staked identity.
+      const info = await getValidatorInfo(sourcePk ?? undefined)
       if (!info.isVoting) {
         throw new Error(
-          `target not voting yet (identity=${info.identityPubkey || 'unknown'})`,
+          `target not voting yet (identity=${(info.identityPubkey || 'unknown').slice(0, 8)}…)`,
         )
       }
-      return `voting=true vote_account=${info.voteAccount ?? 'unknown'}`
+      // CR-2: notify SOURCE that voting is confirmed so it can run step 9 wipe.
+      const meta = JSON.stringify({
+        kind: 'voting_confirmed',
+        step: 8,
+        identityPubkey: info.identityPubkey,
+        voteAccount: info.voteAccount,
+        ts: Date.now(),
+      })
+      const plaintext = new TextEncoder().encode(meta)
+      const enc = encrypt(plaintext, ctx.sessionKey)
+      const hash = sha256Hex(plaintext)
+      client.send({
+        type: 'agent:encrypted_payload',
+        payload: encodePayload(enc),
+        hash,
+      })
+      return `voting=true vote_account=${info.voteAccount ? info.voteAccount.slice(0, 8) + '…' : 'unknown'}`
     }
 
     case 9: {
-      // cleanup on SOURCE — secure wipe staked keypair
       if (role !== 'source') return 'noop (target waits)'
-      if (!opts.keypair) {
-        throw new Error('source --keypair required for step 9 cleanup')
+      if (!opts.keypair) throw new Error('source --keypair required for step 9 cleanup')
+      // CR-2: wait for target's voting_confirmed envelope. Refuse to wipe
+      // if target has not positively confirmed voting within the timeout.
+      const deadline = nowMs() + VOTING_CONFIRMED_TIMEOUT_MS
+      while (nowMs() < deadline && !ctx.getPeerVotingConfirmed()) {
+        await new Promise(r => setTimeout(r, 200))
+      }
+      if (!ctx.getPeerVotingConfirmed()) {
+        throw new Error(
+          'cannot wipe: target voting not confirmed within timeout — keypair preserved',
+        )
+      }
+      if (!opts.yes) {
+        const ok = await confirmDestructive(
+          `Securely wipe staked keypair at ${opts.keypair}? This is irreversible.`,
+        )
+        if (!ok) throw new Error('operator declined step 9')
       }
       await secureWipe(opts.keypair)
-      return `wiped ${opts.keypair}`
+      ctx.unregisterTmpFile(opts.keypair)
+      return 'wiped staked keypair'
     }
 
     default:
-      // Unknown / rollback step — TODO: full rollback step semantics.
-      // For now, treat as no-op so Hub can drive arbitrary recovery flows.
       return `unknown step ${step}; no-op`
   }
+}
+
+// ---------------------------------------------------------------------------
+// CR-1 helper: poll until source has stopped voting (or fall through with throw).
+// ---------------------------------------------------------------------------
+
+async function waitForSourceQuiet(
+  sourcePubkey: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = nowMs() + timeoutMs
+  while (nowMs() < deadline) {
+    try {
+      // Check `solana validators` for delinquent flag — a deactivated source
+      // becomes delinquent within seconds.
+      const { stdout } = await runSolanaCli(['validators', '--output', 'json'])
+      const parsed = JSON.parse(stdout) as {
+        validators?: Array<{
+          identityPubkey?: string
+          delinquent?: boolean
+          lastVote?: number
+        }>
+      }
+      const match = parsed.validators?.find(v => v.identityPubkey === sourcePubkey)
+      if (!match) return // source is no longer in the validators set — quiet.
+      if (match.delinquent === true) return // source is delinquent — not voting.
+    } catch {
+      // ignore poll error and retry
+    }
+    await new Promise(r => setTimeout(r, 5000))
+  }
+  throw new Error(
+    `anti-dual-identity gate: source ${sourcePubkey.slice(0, 8)}… still appears active after ${timeoutMs}ms`,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -611,12 +770,8 @@ function decryptPending(pending: PendingPayload, key: Uint8Array): string {
 }
 
 async function waitForPending(ctx: StepCtx): Promise<PendingPayload> {
-  // Short-circuit if already buffered.
   const initial = ctx.getPending()
   if (initial) return initial
-  // Otherwise poll briefly — relay events are asynchronous and may arrive
-  // either just before or just after the matching execute_step message.
-  // 30 second cap is generous for hub relay round-trip.
   const deadline = nowMs() + 30_000
   while (nowMs() < deadline) {
     await new Promise(r => setTimeout(r, 50))
@@ -626,18 +781,18 @@ async function waitForPending(ctx: StepCtx): Promise<PendingPayload> {
   throw new Error('timed out waiting for relayed payload from peer')
 }
 
-function ensureUnstakedKeypair(opts: AgentOpts): string {
-  // tweetnacl's nacl.sign.keyPair() returns a 64-byte secretKey already in the
-  // canonical Solana keypair layout (32-byte seed || 32-byte pubkey).
+function ensureUnstakedKeypair(opts: AgentOpts, ctx: StepCtx): string {
   if (opts.unstakedKeypair) {
     if (existsSync(opts.unstakedKeypair)) return opts.unstakedKeypair
     const kp = nacl.sign.keyPair()
     writeKeypair(opts.unstakedKeypair, Buffer.from(kp.secretKey))
     return opts.unstakedKeypair
   }
+  // Generated to tmp — track for cleanup on exit.
   const tmpPath = pathJoin(tmpdir(), `unstaked-${nanoid(8)}.json`)
   const kp = nacl.sign.keyPair()
   writeKeypair(tmpPath, Buffer.from(kp.secretKey))
+  ctx.registerTmpFile(tmpPath)
   return tmpPath
 }
 

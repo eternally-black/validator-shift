@@ -38,6 +38,35 @@ function formatDuration(ms: number): string {
   return `${m}m${s}s`
 }
 
+/**
+ * Strip likely secret material from a string before logging or sending it
+ * over the wire. Targets:
+ *   - 64-byte JSON arrays (Solana keypair format)
+ *   - Long contiguous base64 blobs (encrypted payloads, raw secret keys)
+ */
+export function redactSecrets(text: string): string {
+  if (!text) return text
+  return text
+    .replace(/\[(\s*\d+\s*,\s*){63,}\s*\d+\s*\]/g, '[REDACTED:secret-bytes]')
+    .replace(/[A-Za-z0-9+/]{60,}={0,2}/g, (m) => `[REDACTED:base64:${m.length}]`)
+}
+
+/**
+ * Operator confirmation prompt for destructive actions (set-identity,
+ * authorized-voter changes, secure-wipe). Defaults to 'no' on ENTER.
+ */
+export async function confirmDestructive(message: string): Promise<boolean> {
+  const { confirmed } = (await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirmed',
+      message: chalk.red.bold('⚠ ' + message),
+      default: false,
+    },
+  ])) as { confirmed: boolean }
+  return confirmed
+}
+
 export function printBanner(): void {
   const title = green.bold('VALIDATOR-SHIFT')
   const subtitle = chalk.dim('Solana validator identity transfer')

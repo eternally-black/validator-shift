@@ -24,7 +24,21 @@ program
     '--unstaked-keypair <path>',
     'path for the unstaked keypair on source (optional; generated to tmp if omitted)',
   )
-  .action(async (raw: Record<string, string | undefined>) => {
+  .option(
+    '--identity-pubkey <pk>',
+    'base58 pubkey of the running validator (required on source — DO NOT rely on `solana address` which returns the operator default keypair)',
+  )
+  .option(
+    '--skip-snapshot-check',
+    'pass --skip-new-snapshot-check to wait-for-restart-window (default off; only enable for known-good snapshots)',
+    false,
+  )
+  .option(
+    '-y, --yes',
+    'auto-confirm destructive operations (set-identity, authorized-voter, secure-wipe). Use only in fully attended automation.',
+    false,
+  )
+  .action(async (raw: Record<string, string | boolean | undefined>) => {
     try {
       if (raw.role !== 'source' && raw.role !== 'target') {
         throw new Error(`invalid --role "${String(raw.role)}" (expected source|target)`)
@@ -32,14 +46,22 @@ program
       if (raw.role === 'source' && !raw.keypair) {
         throw new Error('--keypair is required when --role=source')
       }
+      if (raw.role === 'source' && !raw.identityPubkey) {
+        throw new Error(
+          '--identity-pubkey is required when --role=source (must match the running validator\'s --identity flag)',
+        )
+      }
 
       const opts: AgentOpts = {
         role: raw.role,
         session: String(raw.session),
         hub: String(raw.hub),
         ledger: String(raw.ledger),
-        keypair: raw.keypair,
-        unstakedKeypair: raw.unstakedKeypair,
+        keypair: raw.keypair as string | undefined,
+        unstakedKeypair: raw.unstakedKeypair as string | undefined,
+        identityPubkey: raw.identityPubkey as string | undefined,
+        skipSnapshotCheck: Boolean(raw.skipSnapshotCheck),
+        yes: Boolean(raw.yes),
       }
 
       await runAgent(opts)

@@ -44,6 +44,9 @@ export function runSolanaCli(
         cwd,
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // NO_DNA=1 signals the Solana CLI we are a non-human operator:
+        // disables interactive prompts, TUI, and prefers structured output.
+        env: { ...process.env, NO_DNA: '1' },
       });
     } catch (err) {
       reject(

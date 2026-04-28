@@ -78,33 +78,36 @@ export async function removeAllAuthorizedVoters(ledger: string): Promise<void> {
 /**
  * Best-effort discovery of the running validator's identity and voting state.
  *
- * Strategy:
- *  1. `solana address` → identity pubkey associated with the local CLI config.
- *     (TODO: prefer querying `solana-validator --ledger ... contact-info` once
- *     a stable JSON output for it is verified across all supported releases.)
- *  2. `solana gossip --output json` → check whether identity is in gossip.
- *  3. `solana validators --output json` → look up vote account / delinquency
- *     for the identity (best-effort; clusters may be very large).
+ * If `identityPubkey` is provided (recommended — pass --identity-pubkey on the
+ * source CLI), it is used as the source of truth: this avoids the trap where
+ * `solana address` returns the operator's CLI default keypair which may NOT
+ * match the running validator's --identity flag.
+ *
+ * If omitted, falls back to `solana address` for backward compatibility, but
+ * callers should treat the result with suspicion in production.
  *
  * This function never throws — it returns safe defaults if parsing fails so
  * that callers can use it for diagnostics rather than control flow.
  */
-export async function getValidatorInfo(): Promise<ValidatorInfo> {
-  let identityPubkey = '';
+export async function getValidatorInfo(
+  identityPubkey?: string,
+): Promise<ValidatorInfo> {
+  let resolvedIdentity = identityPubkey ?? '';
   let voteAccount: string | null = null;
   let isVoting = false;
   let isCaughtUp = false;
 
-  // Step 1: identity pubkey from local CLI config.
-  try {
-    const { stdout } = await runSolanaCli(['address']);
-    identityPubkey = stdout.trim();
-  } catch (err) {
-    // TODO: fall back to reading the validator's --identity flag from the
-    // running process' command line (platform-specific). For now, return
-    // empty string so caller knows we couldn't determine it.
-    if (!(err instanceof SolanaCliError)) throw err;
-    return { identityPubkey: '', voteAccount: null, isVoting: false, isCaughtUp: false };
+  if (!resolvedIdentity) {
+    // Fallback: identity pubkey from local CLI config. Unsafe in production —
+    // this returns the operator's default keypair, not necessarily the running
+    // validator's --identity. Caller should pass identityPubkey explicitly.
+    try {
+      const { stdout } = await runSolanaCli(['address']);
+      resolvedIdentity = stdout.trim();
+    } catch (err) {
+      if (!(err instanceof SolanaCliError)) throw err;
+      return { identityPubkey: '', voteAccount: null, isVoting: false, isCaughtUp: false };
+    }
   }
 
   // Step 2: gossip check (caught-up ≈ present in gossip).
@@ -114,7 +117,7 @@ export async function getValidatorInfo(): Promise<ValidatorInfo> {
     if (Array.isArray(parsed)) {
       isCaughtUp = parsed.some(
         (entry: { identityPubkey?: string }) =>
-          entry?.identityPubkey === identityPubkey,
+          entry?.identityPubkey === resolvedIdentity,
       );
     }
   } catch {
@@ -138,7 +141,7 @@ export async function getValidatorInfo(): Promise<ValidatorInfo> {
       }>;
     };
     const list = parsed?.validators ?? [];
-    const match = list.find(v => v.identityPubkey === identityPubkey);
+    const match = list.find(v => v.identityPubkey === resolvedIdentity);
     if (match) {
       voteAccount = match.voteAccountPubkey ?? null;
       isVoting = match.delinquent === false && (match.lastVote ?? 0) > 0;
@@ -148,7 +151,7 @@ export async function getValidatorInfo(): Promise<ValidatorInfo> {
     // If parsing fails, leave voteAccount=null and isVoting=false.
   }
 
-  return { identityPubkey, voteAccount, isVoting, isCaughtUp };
+  return { identityPubkey: resolvedIdentity, voteAccount, isVoting, isCaughtUp };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +175,7 @@ function runSolanaValidator(
       child = spawn('solana-validator', args, {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, NO_DNA: '1' },
       });
     } catch (err) {
       reject(
