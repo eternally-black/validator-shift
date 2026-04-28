@@ -1,8 +1,9 @@
 # ----------------------------------------------------------------------------
 # ValidatorShift — local / self-hosted stack
-# Architecture reference: SOLSHIFT_Architecture.md §9.1
 # ----------------------------------------------------------------------------
-# Ports:
+# Ports (bound to 127.0.0.1 by default — front via reverse proxy / TLS for
+# external access; export them on 0.0.0.0 only when you intentionally want
+# the hub reachable from off-host):
 #   3001 — Hub HTTP API (Fastify)
 #   3002 — Hub WebSocket relay
 #   3000 — Web UI (Next.js standalone)
@@ -16,24 +17,42 @@ services:
     image: validator-shift/hub:local
     container_name: validator-shift-hub
     ports:
-      - "3001:3001"   # HTTP API
-      - "3002:3002"   # WebSocket
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3002:3002"
     volumes:
-      - ./data:/app/data   # SQLite database (host-mounted for persistence)
+      # Named volume keeps uid/gid in sync with the in-image nodejs user (1001).
+      - hub-data:/app/data
     environment:
       NODE_ENV: production
     restart: unless-stopped
     networks:
       - validator-shift
-    # TODO(wave-3): enable healthcheck once packages/hub exposes GET /health.
-    # The Hub source currently has no /health endpoint and Wave 3 scope forbids
-    # editing packages/. Re-enable this block in Wave 4 / when the endpoint lands.
-    # healthcheck:
-    #   test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
-    #   interval: 30s
-    #   timeout: 5s
-    #   retries: 3
-    #   start_period: 10s
+    # Lightweight TCP probe — no /health endpoint required. Node is already
+    # in the image so we use it instead of installing nc/wget for the check.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').createConnection(3001,'127.0.0.1').on('connect',function(){this.end();process.exit(0)}).on('error',function(){process.exit(1)})",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
   web:
     build:
@@ -42,7 +61,7 @@ services:
     image: validator-shift/web:local
     container_name: validator-shift-web
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: production
       # Browser-facing WebSocket URL. Override for production (e.g. wss://your-domain:3002).
@@ -50,11 +69,31 @@ services:
       # Server-side HTTP URL (resolved on the docker network via service name).
       HUB_API_URL: http://hub:3001
     depends_on:
-      - hub
+      hub:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - validator-shift
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Next.js writes ISR cache + image-optimisation artefacts to /app/.next/cache.
+      - /tmp
+      - /app/packages/web/.next/cache
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+volumes:
+  hub-data:
+    name: validator-shift-hub-data
 
 networks:
   validator-shift:
+    name: validator-shift
     driver: bridge

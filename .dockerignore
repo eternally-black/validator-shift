@@ -47,3 +47,22 @@ Thumbs.db
 Dockerfile*
 docker-compose*.yml
 .dockerignore
+
+# CI/CD definitions and docs — never needed inside images
+.github
+.gitlab-ci.yml
+*.md
+!packages/*/README.md
+LICENSE
+LICENCE
+docs/
+
+# Test sources and fixtures
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+e2e/
+
+# Reference / spec docs at the repo root (kept for humans, not images)
+SOLSHIFT_Architecture.md
