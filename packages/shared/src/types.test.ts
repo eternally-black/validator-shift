@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MigrationState } from './types.js'
+import { MigrationState } from './types'
 import type {
   PreflightCheck,
   StepResult,
@@ -9,7 +9,7 @@ import type {
   LogEntry,
   StepProgress,
   AgentRole,
-} from './types.js'
+} from './types'
 
 describe('MigrationState enum', () => {
   it('has exact set of values in declared order (snapshot)', () => {

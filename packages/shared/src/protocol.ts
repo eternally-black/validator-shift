@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MigrationState } from './types.js'
+import { MigrationState } from './types'
 
 // ---------- Reusable sub-schemas ----------
 

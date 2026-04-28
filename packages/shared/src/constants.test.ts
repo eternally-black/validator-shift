@@ -8,7 +8,7 @@ import {
   DEFAULT_HUB_WS_PORT,
   HEARTBEAT_INTERVAL_MS,
   PAIRING_RECONNECT_MAX_ATTEMPTS,
-} from './constants.js'
+} from './constants'
 
 describe('SESSION_CODE_LENGTH', () => {
   it('equals 6', () => {

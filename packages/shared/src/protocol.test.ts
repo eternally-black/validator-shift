@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMessage } from './protocol.js'
+import { parseMessage } from './protocol'
 
 describe('parseMessage', () => {
   describe('AgentMessage', () => {
