@@ -1,19 +1,11 @@
 import { z } from 'zod'
+import { MigrationState } from './types.js'
 
 // ---------- Reusable sub-schemas ----------
 
 const AgentRoleSchema = z.enum(['source', 'target'])
 
-const MigrationStateSchema = z.enum([
-  'IDLE',
-  'PAIRING',
-  'PREFLIGHT',
-  'AWAITING_WINDOW',
-  'MIGRATING',
-  'COMPLETE',
-  'ROLLBACK',
-  'FAILED',
-])
+const MigrationStateSchema = z.nativeEnum(MigrationState)
 
 const PreflightCheckSchema = z.object({
   name: z.string(),

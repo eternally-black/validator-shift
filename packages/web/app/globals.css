@@ -1,3 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply bg-term-bg text-term-text font-sans;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background-color: #00FF4133;
+    color: #00FF41;
+  }
+
+  code,
+  pre,
+  kbd {
+    @apply font-mono;
+  }
+}
