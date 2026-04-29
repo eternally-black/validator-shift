@@ -57,21 +57,25 @@ program
         )
       }
 
-      // H-3: refuse plain ws:// to a non-loopback host. SAS still detects MITM,
-      // but we should never normalize plaintext WebSocket in production.
+      // H-3: refuse plaintext (http:// or ws://) to a non-loopback host.
+      // SAS still detects MITM, but we should never normalize plaintext in prod.
       const hubUrl = String(raw.hub)
       const parsed = new URL(hubUrl)
       const isLoopback =
         parsed.hostname === 'localhost' ||
         parsed.hostname === '127.0.0.1' ||
         parsed.hostname === '[::1]'
-      if (parsed.protocol === 'ws:' && !isLoopback && raw.insecureWs !== true) {
+      const isPlaintext = parsed.protocol === 'ws:' || parsed.protocol === 'http:'
+      const isSecure = parsed.protocol === 'wss:' || parsed.protocol === 'https:'
+      if (!isPlaintext && !isSecure) {
         throw new Error(
-          `--hub uses plain ws:// to ${parsed.hostname}. Use wss:// or pass --insecure-ws (not recommended).`,
+          `--hub must use http(s):// or ws(s):// (got ${parsed.protocol})`,
         )
       }
-      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-        throw new Error(`--hub must use ws:// or wss:// (got ${parsed.protocol})`)
+      if (isPlaintext && !isLoopback && raw.insecureWs !== true) {
+        throw new Error(
+          `--hub uses plaintext ${parsed.protocol} to ${parsed.hostname}. Use https:// / wss:// or pass --insecure-ws (not recommended).`,
+        )
       }
 
       const opts: AgentOpts = {

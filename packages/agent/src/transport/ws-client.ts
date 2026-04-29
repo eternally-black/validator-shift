@@ -46,7 +46,9 @@ export class HubClient extends EventEmitter {
 
   constructor(opts: HubClientOptions) {
     super()
-    this.hubUrl = opts.hubUrl.replace(/\/+$/, '')
+    // Accept http(s):// and ws(s):// — hub serves both schemes on one port,
+    // so we normalize to ws(s) for the WebSocket upgrade.
+    this.hubUrl = opts.hubUrl.replace(/^http(s?):/i, 'ws$1:').replace(/\/+$/, '')
     this.sessionCode = opts.sessionCode
     this.role = opts.role
     this.publicKey = opts.publicKey

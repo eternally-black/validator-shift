@@ -10,12 +10,22 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'
 
 export interface DashboardClientOpts {
   sessionId: string
-  hubWsUrl: string
+  /**
+   * Single hub origin (http:// or https://). Internally converted to
+   * ws:// or wss:// for the WebSocket upgrade — hub serves both schemes
+   * on the same port.
+   */
+  hubUrl: string
   /**
    * Bearer token returned by POST /api/sessions. Required by the hub —
    * connections without a valid token are closed with code 4401.
    */
   token: string
+}
+
+/** Convert an http(s) origin into the matching ws(s) origin. */
+function toWsOrigin(httpUrl: string): string {
+  return httpUrl.replace(/^http(s?):/i, 'ws$1:')
 }
 
 /**
@@ -42,7 +52,7 @@ const isDev =
  */
 export class DashboardClient {
   private readonly sessionId: string
-  private readonly hubWsUrl: string
+  private readonly hubWsOrigin: string
   private readonly token: string
 
   private ws: WebSocket | null = null
@@ -56,7 +66,7 @@ export class DashboardClient {
 
   constructor(opts: DashboardClientOpts) {
     this.sessionId = opts.sessionId
-    this.hubWsUrl = opts.hubWsUrl.replace(/\/+$/, '')
+    this.hubWsOrigin = toWsOrigin(opts.hubUrl).replace(/\/+$/, '')
     this.token = opts.token
   }
 
@@ -121,7 +131,7 @@ export class DashboardClient {
       this.reconnectTimer = null
     }
 
-    const url = `${this.hubWsUrl}/ws/dashboard/${encodeURIComponent(this.sessionId)}?token=${encodeURIComponent(this.token)}`
+    const url = `${this.hubWsOrigin}/ws/dashboard/${encodeURIComponent(this.sessionId)}?token=${encodeURIComponent(this.token)}`
     this.setStatus('connecting')
 
     let socket: WebSocket

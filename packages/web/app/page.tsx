@@ -5,14 +5,14 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 
-const HUB_API_URL = process.env.HUB_API_URL ?? 'http://localhost:3001'
+const HUB_URL = process.env.HUB_URL ?? 'http://localhost:3001'
 
 async function fetchRecentSessions(): Promise<{
   sessions: Session[]
   reachable: boolean
 }> {
   try {
-    const res = await fetch(`${HUB_API_URL}/api/sessions?limit=5`, {
+    const res = await fetch(`${HUB_URL}/api/sessions?limit=5`, {
       next: { revalidate: 5 },
     })
     if (!res.ok) return { sessions: [], reachable: false }

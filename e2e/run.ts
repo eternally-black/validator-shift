@@ -78,8 +78,8 @@ const FAKE_LEDGER = join(E2E_DIR, 'fake-ledger')
 const FAKE_SOURCE_KP = join(E2E_DIR, 'fake-source-keypair.json')
 const FAKE_TARGET_KP = join(E2E_DIR, 'fake-target-keypair.json')
 
-const HUB_HTTP_PORT = '13001'
-const HUB_WS_PORT = '13002'
+// Hub now serves HTTP + WebSocket on a single port.
+const HUB_PORT = '13001'
 
 const HUB_ENTRY = join(ROOT, 'packages', 'hub', 'src', 'index.ts')
 const AGENT_ENTRY = join(ROOT, 'packages', 'agent', 'src', 'bin.ts')
@@ -209,8 +209,7 @@ async function startHub(): Promise<void> {
   log('starting hub…')
   const env = {
     ...process.env,
-    HUB_HTTP_PORT,
-    HUB_WS_PORT,
+    PORT: HUB_PORT,
     HUB_DB_PATH: ':memory:',
     NODE_ENV: 'test',
   }
@@ -226,7 +225,7 @@ async function startHub(): Promise<void> {
   pipeOutput(child, 'hub')
 
   // Poll the HTTP port until it accepts requests.
-  const url = `http://localhost:${HUB_HTTP_PORT}/api/sessions`
+  const url = `http://localhost:${HUB_PORT}/api/sessions`
   const deadline = Date.now() + 30_000
   let lastErr: unknown = null
   while (Date.now() < deadline) {
@@ -261,7 +260,7 @@ interface CreatedSession {
 }
 
 async function createSession(): Promise<CreatedSession> {
-  const url = `http://localhost:${HUB_HTTP_PORT}/api/sessions`
+  const url = `http://localhost:${HUB_PORT}/api/sessions`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -286,7 +285,7 @@ interface Observer {
 }
 
 function observeDashboard(sessionId: string): Observer {
-  const url = `ws://localhost:${HUB_WS_PORT}/ws/dashboard/${encodeURIComponent(sessionId)}`
+  const url = `ws://localhost:${HUB_PORT}/ws/dashboard/${encodeURIComponent(sessionId)}`
   log(`opening dashboard WS: ${url}`)
   const ws = new WebSocket(url)
   const states: string[] = []
@@ -354,7 +353,7 @@ function startAgent(
     '--session',
     sessionCode,
     '--hub',
-    `ws://localhost:${HUB_WS_PORT}`,
+    `http://localhost:${HUB_PORT}`,
     '--ledger',
     FAKE_LEDGER,
     '--keypair',

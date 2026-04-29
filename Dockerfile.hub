@@ -64,8 +64,7 @@ WORKDIR /app
 RUN apk add --no-cache tini libc6-compat
 
 ENV NODE_ENV=production \
-    PORT=3001 \
-    WS_PORT=3002
+    PORT=3001
 
 RUN addgroup -g 1001 -S nodejs \
  && adduser  -u 1001 -S nodejs -G nodejs
@@ -91,7 +90,7 @@ VOLUME ["/app/data"]
 
 USER nodejs
 
-EXPOSE 3001 3002
+EXPOSE 3001
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "packages/hub/dist/index.js"]

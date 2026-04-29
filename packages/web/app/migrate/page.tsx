@@ -10,7 +10,8 @@ import { DashboardClient, wireClientToStore } from '@/lib/ws'
 
 type WizardStep = 1 | 2 | 3
 
-const HUB_WS_URL = process.env.NEXT_PUBLIC_HUB_URL ?? 'ws://localhost:3002'
+// Single hub URL; lib/ws.ts converts http(s) -> ws(s) for the WebSocket.
+const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? 'http://localhost:3001'
 
 export default function MigratePage() {
   const [step, setStep] = useState<WizardStep>(1)
@@ -22,7 +23,7 @@ export default function MigratePage() {
 
     const client = new DashboardClient({
       sessionId,
-      hubWsUrl: HUB_WS_URL,
+      hubUrl: HUB_URL,
       token: dashboardToken,
     })
 

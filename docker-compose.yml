@@ -17,8 +17,8 @@ services:
     image: validator-shift/hub:local
     container_name: validator-shift-hub
     ports:
+      # Single port: hub serves HTTP API + WebSocket on the same listener.
       - "127.0.0.1:3001:3001"
-      - "127.0.0.1:3002:3002"
     volumes:
       # Named volume keeps uid/gid in sync with the in-image nodejs user (1001).
       - hub-data:/app/data
@@ -64,10 +64,11 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: production
-      # Browser-facing WebSocket URL. Override for production (e.g. wss://your-domain:3002).
-      NEXT_PUBLIC_HUB_URL: ws://localhost:3002
-      # Server-side HTTP URL (resolved on the docker network via service name).
-      HUB_API_URL: http://hub:3001
+      # Browser-facing hub origin (HTTP + WS on same port).
+      # Override for production, e.g. https://hub.your-domain.com
+      NEXT_PUBLIC_HUB_URL: http://localhost:3001
+      # Server-side URL used by Next.js RSC fetchers (docker network).
+      HUB_URL: http://hub:3001
     depends_on:
       hub:
         condition: service_healthy

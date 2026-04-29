@@ -26,7 +26,7 @@ interface CreateSessionResponse {
   dashboardToken: string
 }
 
-const HUB_API_URL = process.env.NEXT_PUBLIC_HUB_API_URL ?? ''
+const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? ''
 
 export function Step1Configure({ onNext }: Step1Props) {
   const ledgerId = useId()
@@ -69,7 +69,7 @@ export function Step1Configure({ onNext }: Step1Props) {
       setSubmitting(true)
       setSubmitError(null)
       try {
-        const res = await fetch(`${HUB_API_URL}/api/sessions`, {
+        const res = await fetch(`${HUB_URL}/api/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
