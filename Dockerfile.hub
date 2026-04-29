@@ -30,8 +30,8 @@ RUN npm ci --omit=dev --prefer-offline --no-audit --fund=false
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# tini is the only OS package in runtime; no python/make/g++.
-RUN apk add --no-cache tini libc6-compat
+# tini for PID 1; su-exec drops privs after fixing volume ownership.
+RUN apk add --no-cache tini libc6-compat su-exec
 
 ENV NODE_ENV=production \
     PORT=3001
@@ -60,9 +60,8 @@ COPY --chown=nodejs:nodejs packages/hub    ./packages/hub
 # the platform config (railway volume add / compose service.volumes).
 RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
 
-USER nodejs
-
 EXPOSE 3001
 
-ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["npx", "tsx", "packages/hub/src/index.ts"]
+# Init runs as root: chown the externally-mounted volume (Railway/compose
+# attach it as root by default), then drop to uid 1001 via su-exec.
+ENTRYPOINT ["/sbin/tini", "--", "sh", "-c", "chown -R nodejs:nodejs /app/data && exec su-exec nodejs npx tsx packages/hub/src/index.ts"]
