@@ -196,7 +196,25 @@ export function handleAgentSocket(
         }
         role = helloRole
         room.addAgent(role, ws)
+        room.setAgentPubkey(role, msg.publicKey)
         deps.orchestrator.handleAgentMessage(session.id, role, msg)
+
+        // If both agents have now sent their hello, fan out hub:peer_connected
+        // so each side learns the peer's X25519 public key and can derive the
+        // shared secret + SAS. This is the missing piece without which the
+        // agent's `await waitForPeer(...)` blocks forever (architecture §3.2).
+        if (room.hasBothPubkeys()) {
+          const sourcePk = room.agentPubkeys.source!
+          const targetPk = room.agentPubkeys.target!
+          room.sendToAgent('source', {
+            type: 'hub:peer_connected',
+            peerPublicKey: targetPk,
+          })
+          room.sendToAgent('target', {
+            type: 'hub:peer_connected',
+            peerPublicKey: sourcePk,
+          })
+        }
         return
       }
 

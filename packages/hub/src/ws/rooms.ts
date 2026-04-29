@@ -38,6 +38,7 @@ export class Room {
   readonly sessionId: string
   readonly code: string
   readonly agents: { source?: WebSocket; target?: WebSocket } = {}
+  readonly agentPubkeys: { source?: string; target?: string } = {}
   readonly dashboards: Set<WebSocket> = new Set()
 
   constructor(sessionId: string, code: string) {
@@ -51,9 +52,23 @@ export class Room {
     this.agents[role] = ws
   }
 
+  /** Record the agent's X25519 public key from agent:hello. Used so the hub
+   * can fan out hub:peer_connected once both agents have arrived. */
+  setAgentPubkey(role: AgentRole, pubkey: string): void {
+    this.agentPubkeys[role] = pubkey
+  }
+
+  hasBothPubkeys(): boolean {
+    return (
+      this.agentPubkeys.source !== undefined &&
+      this.agentPubkeys.target !== undefined
+    )
+  }
+
   /** Detach an agent socket for the given role (if any). */
   removeAgent(role: AgentRole): void {
     delete this.agents[role]
+    delete this.agentPubkeys[role]
   }
 
   addDashboard(ws: WebSocket): void {

@@ -293,6 +293,15 @@ export class SessionManager {
         prevState: payload.from,
       }
       room.broadcastToDashboards(msg)
+
+      // On entering PREFLIGHT, request both agents to run their checklists.
+      // Without this, agents block at `await client.once('hub:run_preflight')`
+      // forever and the wizard never advances to step 3.
+      if (payload.to === MigrationState.PREFLIGHT) {
+        const runPreflight: HubToAgentMessage = { type: 'hub:run_preflight' }
+        room.sendToAgent('source', runPreflight)
+        room.sendToAgent('target', runPreflight)
+      }
     })
 
     orchestrator.on('execute_step', (payload) => {
