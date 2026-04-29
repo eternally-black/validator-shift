@@ -93,4 +93,7 @@ USER nodejs
 EXPOSE 3001
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "packages/hub/dist/index.js"]
+# tsc without rootDir emits to dist/<package>/src/* because the program
+# pulls in @validator-shift/shared sources via path-aliases. Update this
+# path if the build is migrated to TS project references.
+CMD ["node", "packages/hub/dist/hub/src/index.js"]
