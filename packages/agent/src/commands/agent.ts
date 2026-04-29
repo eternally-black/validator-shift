@@ -50,8 +50,8 @@ import {
   printStepProgress,
   printError,
   printLog,
-  redactSecrets,
 } from '../ui/terminal.js'
+import { redactSecrets } from '@validator-shift/shared/redact'
 
 export interface AgentOpts {
   role: AgentRole

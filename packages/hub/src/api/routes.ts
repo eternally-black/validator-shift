@@ -1,9 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import {
-  MigrationState,
   type AgentStatus,
-  type LogEntry,
   type Session,
 } from '@validator-shift/shared'
 import {
@@ -14,6 +12,8 @@ import {
   type GetSessionResponse,
   type ListSessionsResponse,
 } from './schemas.js'
+import { getRecentAuditLogs } from '../db/queries.js'
+import { CANCELLABLE_STATES } from '../session-manager.js'
 
 /**
  * Default session TTL when the client doesn't request a custom one.
@@ -55,59 +55,6 @@ export interface RouteDeps {
   }
 }
 
-/**
- * States from which a session may still be cancelled. Anything past
- * PAIRING is in-flight migration territory and must not be cancelled
- * via the public API to avoid creating dual-identity hazards.
- */
-const CANCELLABLE_STATES: ReadonlySet<MigrationState> = new Set([
-  MigrationState.IDLE,
-  MigrationState.PAIRING,
-])
-
-/**
- * Pulls the most recent audit-log entries for a session out of SQLite.
- *
- * The audit-log table is owned by the persistence layer and may not yet
- * exist when this module is loaded in isolation (e.g. unit tests with
- * an empty DB). We treat any failure here as "no logs available" rather
- * than propagating it to the caller, since the session payload itself
- * is still valid without them.
- */
-function fetchRecentLogs(
-  db: import('better-sqlite3').Database,
-  sessionId: string,
-  limit: number,
-): LogEntry[] {
-  try {
-    const rows = db
-      .prepare(
-        `SELECT ts, agent, level, message
-           FROM audit_log
-          WHERE session_id = ?
-          ORDER BY ts DESC
-          LIMIT ?`,
-      )
-      .all(sessionId, limit) as Array<{
-      ts: number
-      agent: string
-      level: string
-      message: string
-    }>
-
-    // Re-sort ascending so the UI can append-render in chronological order.
-    return rows
-      .map((r) => ({
-        ts: Number(r.ts),
-        agent: r.agent as LogEntry['agent'],
-        level: r.level as LogEntry['level'],
-        message: String(r.message),
-      }))
-      .reverse()
-  } catch {
-    return []
-  }
-}
 
 /**
  * Maps a `ZodError` into the JSON body we send with HTTP 400.
@@ -179,7 +126,7 @@ export async function registerRoutes(
         expiresAt: session.expiresAt,
         completedAt: session.completedAt,
         agents: session.agents,
-        recentLogs: fetchRecentLogs(db, session.id, RECENT_LOGS_LIMIT),
+        recentLogs: getRecentAuditLogs(db, session.id, RECENT_LOGS_LIMIT),
       }
       return reply.code(200).send(body)
     },

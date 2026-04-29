@@ -1,17 +1,15 @@
 'use client'
 
+import type { StepProgress } from '@validator-shift/shared'
 import { MIGRATION_STEPS } from '@validator-shift/shared/constants'
 import { Spinner } from '@/components/ui'
 import { useSessionStore } from '@/lib/store'
 
-type StepStatus = 'pending' | 'running' | 'complete' | 'failed'
+type StepStatus = StepProgress['status']
 
 export interface StepListProps {
-  /**
-   * Optional override; if not provided, the list reads progress from the
-   * session store. Index = step.number - 1.
-   */
-  steps?: StepStatus[]
+  /** Optional override; if absent, reads progress from the session store. */
+  steps?: StepProgress[]
 }
 
 function StatusIcon({ status }: { status: StepStatus }) {
@@ -45,29 +43,23 @@ function rowColor(status: StepStatus): string {
 }
 
 export function StepList({ steps }: StepListProps) {
-  // Subscribe only to the slice we need so unrelated store updates do not
-  // re-render this component (rerender-defer-reads).
-  const storeSteps = useSessionStore((s) =>
-    steps ? null : (s as unknown as { steps?: StepStatus[] }).steps ?? null,
-  )
+  const storeSteps = useSessionStore((s) => (steps ? null : s.steps))
+  const resolved = steps ?? storeSteps ?? []
 
-  const resolved: StepStatus[] =
-    steps ??
-    storeSteps ??
-    (MIGRATION_STEPS.map(() => 'pending') as StepStatus[])
+  // Index by step number for O(1) lookup.
+  const byNumber = new Map<number, StepStatus>()
+  for (const p of resolved) byNumber.set(p.step, p.status)
 
   return (
     <ul className="flex flex-col gap-1 font-mono text-sm">
-      {MIGRATION_STEPS.map((step, idx) => {
-        const status: StepStatus = resolved[idx] ?? 'pending'
+      {MIGRATION_STEPS.map((step) => {
+        const status: StepStatus = byNumber.get(step.number) ?? 'pending'
         return (
           <li
             key={step.number}
             className={`flex items-center gap-3 rounded px-2 py-1 ${rowColor(status)}`}
           >
-            <span className="w-6 text-right text-zinc-500">
-              [{step.number}]
-            </span>
+            <span className="w-6 text-right text-zinc-500">[{step.number}]</span>
             <span className="flex-1 truncate">{step.name}</span>
             <span className="text-xs uppercase tracking-wider">{status}</span>
             <StatusIcon status={status} />

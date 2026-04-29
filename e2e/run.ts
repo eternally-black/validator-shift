@@ -461,18 +461,6 @@ function onExit(code: number): void {
   if (exiting) return
   exiting = true
   killAll()
-  // Best-effort cleanup of generated tower file (keypairs are kept so
-  // re-runs are idempotent + comparable).
-  try {
-    if (existsSync(FAKE_LEDGER)) {
-      // leave the dir; just remove tower-*.bin to avoid stale state
-      // between runs with different keypairs.
-      // (intentional best-effort — failure here is not fatal)
-      void rmSync
-    }
-  } catch {
-    // ignore
-  }
   process.exit(code)
 }
 

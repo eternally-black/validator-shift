@@ -77,8 +77,5 @@ export function getExecutor(step: number): AgentRole {
 /** Total number of migration steps (currently 9, per architecture v1.0). */
 export const TOTAL_STEPS = STEPS.length
 
-/** Re-export for tests / dashboards. */
-export const ALL_STEPS: readonly MigrationStep[] = STEPS
-
 /** Re-export StepResult so callers can import from a single place. */
 export type { StepResult }

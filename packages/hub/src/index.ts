@@ -75,15 +75,11 @@ export async function main(): Promise<void> {
     db,
     registry,
     orchestrator: {
-      handleAgentMessage: (sessionId: string, role: 'source' | 'target', msg: any) =>
-        sessionManager.handleAgentMessage(sessionId, role, msg),
-      handleDashboardMessage: (sessionId: string, msg: any) =>
-        sessionManager.handleDashboardMessage(sessionId, msg),
-      handleAgentDisconnect: (sessionId: string, role: 'source' | 'target') =>
-        sessionManager.handleAgentDisconnect(sessionId, role),
+      handleAgentMessage: sessionManager.handleAgentMessage.bind(sessionManager),
+      handleDashboardMessage: sessionManager.handleDashboardMessage.bind(sessionManager),
+      handleAgentDisconnect: sessionManager.handleAgentDisconnect.bind(sessionManager),
     },
-    verifyDashboardToken: (sessionId: string, token: string) =>
-      sessionManager.verifyDashboardToken(sessionId, token),
+    verifyDashboardToken: sessionManager.verifyDashboardToken.bind(sessionManager),
   }
 
   wsServer.on('connection', (ws: WebSocket, req) => {

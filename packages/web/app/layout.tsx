@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { Header } from '@/components/layout/Header'
 import { Footer } from '@/components/layout/Footer'
-import { PageShell } from '@/components/layout/PageShell'
 import Providers from './providers'
 
 const inter = Inter({
@@ -33,7 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-screen flex flex-col">
         <Providers>
           <Header />
-          <PageShell>{children}</PageShell>
+          <main className="container mx-auto max-w-6xl px-6 py-8">{children}</main>
           <Footer />
         </Providers>
       </body>

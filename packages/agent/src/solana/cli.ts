@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 
-export interface RunSolanaCliOptions {
+export interface RunOptions {
   timeoutMs?: number;
   cwd?: string;
 }
 
-export interface RunSolanaCliResult {
+export interface RunResult {
   stdout: string;
   stderr: string;
   code: number;
@@ -27,31 +27,33 @@ export class SolanaCliError extends Error {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
- * Spawns the local `solana` CLI binary with given args.
+ * Spawn a Solana binary (`solana` or `solana-validator`) with the given args.
  * Throws SolanaCliError on non-zero exit, timeout, or spawn failure.
+ *
+ * NO_DNA=1 is always set: signals to the Solana CLI that we are a non-human
+ * operator (disables interactive prompts and TUI, prefers structured output).
  */
-export function runSolanaCli(
+function runProcess(
+  bin: 'solana' | 'solana-validator',
   args: string[],
-  opts: RunSolanaCliOptions = {},
-): Promise<RunSolanaCliResult> {
+  opts: RunOptions = {},
+): Promise<RunResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd = opts.cwd;
 
-  return new Promise<RunSolanaCliResult>((resolve, reject) => {
+  return new Promise<RunResult>((resolve, reject) => {
     let child;
     try {
-      child = spawn('solana', args, {
+      child = spawn(bin, args, {
         cwd,
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
-        // NO_DNA=1 signals the Solana CLI we are a non-human operator:
-        // disables interactive prompts, TUI, and prefers structured output.
         env: { ...process.env, NO_DNA: '1' },
       });
     } catch (err) {
       reject(
         new SolanaCliError(
-          `Failed to spawn solana CLI: ${(err as Error).message}`,
+          `Failed to spawn ${bin}: ${(err as Error).message}`,
           -1,
           '',
         ),
@@ -84,13 +86,7 @@ export function runSolanaCli(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(
-        new SolanaCliError(
-          `solana CLI process error: ${err.message}`,
-          -1,
-          stderr,
-        ),
-      );
+      reject(new SolanaCliError(`${bin} process error: ${err.message}`, -1, stderr));
     });
 
     child.on('close', (code: number | null) => {
@@ -101,7 +97,7 @@ export function runSolanaCli(
       if (timedOut) {
         reject(
           new SolanaCliError(
-            `solana CLI timed out after ${timeoutMs}ms (args: ${args.join(' ')})`,
+            `${bin} timed out after ${timeoutMs}ms (args: ${args.join(' ')})`,
             code ?? -1,
             stderr,
           ),
@@ -113,7 +109,7 @@ export function runSolanaCli(
       if (exitCode !== 0) {
         reject(
           new SolanaCliError(
-            `solana CLI exited with code ${exitCode} (args: ${args.join(' ')})`,
+            `${bin} exited with code ${exitCode} (args: ${args.join(' ')})`,
             exitCode,
             stderr,
           ),
@@ -125,3 +121,17 @@ export function runSolanaCli(
     });
   });
 }
+
+/** Run the `solana` CLI binary. */
+export function runSolanaCli(args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  return runProcess('solana', args, opts);
+}
+
+/** Run the `solana-validator` binary (for ledger / set-identity / authorized-voter). */
+export function runSolanaValidator(args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  return runProcess('solana-validator', args, opts);
+}
+
+// Backwards-compatible aliases (interface names unchanged for callers / tests).
+export type RunSolanaCliOptions = RunOptions;
+export type RunSolanaCliResult = RunResult;

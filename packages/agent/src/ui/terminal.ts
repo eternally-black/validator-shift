@@ -1,11 +1,8 @@
 import chalk from 'chalk'
-import ora, { type Ora } from 'ora'
 import inquirer from 'inquirer'
-import type { PreflightCheck, MigrationSummary } from '@validator-shift/shared'
+import type { PreflightCheck } from '@validator-shift/shared'
 import { MIGRATION_STEPS } from '@validator-shift/shared/constants'
 import { redactSecrets } from '@validator-shift/shared/redact'
-
-export { redactSecrets }
 
 const PHOSPHOR = '#00FF41'
 const AMBER = '#FFB000'
@@ -13,11 +10,6 @@ const MAX_WIDTH = 80
 
 const green = chalk.hex(PHOSPHOR)
 const amber = chalk.hex(AMBER)
-
-function pad(str: string, width: number): string {
-  if (str.length >= width) return str
-  return str + ' '.repeat(width - str.length)
-}
 
 function truncate(str: string, width: number): string {
   if (str.length <= width) return str
@@ -30,15 +22,6 @@ function formatTime(d: Date = new Date()): string {
   const mm = String(d.getMinutes()).padStart(2, '0')
   const ss = String(d.getSeconds()).padStart(2, '0')
   return `${hh}:${mm}:${ss}`
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}m${s}s`
 }
 
 /**
@@ -64,10 +47,6 @@ export function printBanner(): void {
   console.log(title)
   // eslint-disable-next-line no-console
   console.log(subtitle)
-}
-
-export function spinnerFor(label: string): Ora {
-  return ora({ text: label, color: 'green' })
 }
 
 export function printPreflightTable(checks: PreflightCheck[]): void {
@@ -160,25 +139,6 @@ export function printError(err: unknown): void {
   }
 }
 
-export function printSuccess(summary: MigrationSummary): void {
-  // eslint-disable-next-line no-console
-  console.log(`${green('✓')} ${green.bold('MIGRATION COMPLETE')}`)
-
-  const rows: Array<[string, string]> = [
-    ['duration', formatDuration(summary.durationMs)],
-    ['source pubkey', summary.sourcePubkey ?? '—'],
-    ['target pubkey', summary.targetPubkey ?? '—'],
-    ['steps', String(summary.stepsCompleted)],
-  ]
-
-  const labelWidth = Math.max(...rows.map(([k]) => k.length))
-  for (const [k, v] of rows) {
-    const valueMax = Math.max(8, MAX_WIDTH - labelWidth - 3)
-    const value = truncate(v, valueMax)
-    // eslint-disable-next-line no-console
-    console.log(`  ${chalk.dim(pad(k, labelWidth))}  ${value}`)
-  }
-}
 
 export type LogLevel = 'info' | 'warn' | 'error'
 

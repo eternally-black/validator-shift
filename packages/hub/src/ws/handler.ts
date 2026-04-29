@@ -12,8 +12,7 @@
  */
 import { WebSocket } from 'ws'
 import type { Database } from 'better-sqlite3'
-import type { AgentRole, LogEntry, Session } from '@validator-shift/shared'
-import { MigrationState } from '@validator-shift/shared'
+import type { AgentRole } from '@validator-shift/shared'
 import {
   AgentMessageSchema,
   DashboardMessageSchema,
@@ -24,7 +23,13 @@ import {
   type HubToDashboardMessage,
 } from '@validator-shift/shared/protocol'
 import { redactSecrets, isValidSessionCode } from '@validator-shift/shared/redact'
-import type { Room, RoomRegistry } from './rooms.js'
+import {
+  appendAuditLog as dbAppendAuditLog,
+  getRecentAuditLogs,
+  getSessionById,
+  getSessionByCode,
+} from '../db/queries.js'
+import { type Room, type RoomRegistry, safeSend } from './rooms.js'
 
 // ---------- Dependency contract ----------
 
@@ -72,45 +77,7 @@ function wsRateLimitExceeded(ip: string | undefined): boolean {
 
 // ---------- Internal helpers ----------
 
-interface SessionRow {
-  id: string
-  code: string
-  state: string
-  created_at: number
-  expires_at: number
-  completed_at: number | null
-}
-
-function findSessionByCode(db: Database, code: string): SessionRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, code, state, created_at, expires_at, completed_at
-       FROM sessions WHERE code = ?`,
-    )
-    .get(code) as SessionRow | undefined
-}
-
-function findSessionById(db: Database, id: string): SessionRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, code, state, created_at, expires_at, completed_at
-       FROM sessions WHERE id = ?`,
-    )
-    .get(id) as SessionRow | undefined
-}
-
-function rowToSession(row: SessionRow): Session {
-  return {
-    id: row.id,
-    code: row.code,
-    state: row.state as MigrationState,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
-    completedAt: row.completed_at ?? undefined,
-  }
-}
-
-/** Append a single audit-log row. Returns the row's monotonic ts. */
+/** Append an audit-log row using the canonical query helper. Returns ts. */
 function appendAuditLog(
   db: Database,
   sessionId: string,
@@ -119,48 +86,8 @@ function appendAuditLog(
   message: string,
 ): number {
   const ts = Date.now()
-  db.prepare(
-    `INSERT INTO audit_log (session_id, ts, level, agent, message)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(sessionId, ts, level, agent, message)
+  dbAppendAuditLog(db, { sessionId, ts, agent, level, message })
   return ts
-}
-
-function recentLogs(
-  db: Database,
-  sessionId: string,
-  limit: number = 200,
-): LogEntry[] {
-  const rows = db
-    .prepare(
-      `SELECT ts, agent, level, message FROM audit_log
-       WHERE session_id = ? ORDER BY ts DESC LIMIT ?`,
-    )
-    .all(sessionId, limit) as Array<{
-    ts: number
-    agent: string
-    level: string
-    message: string
-  }>
-  // Return in chronological (ascending) order.
-  return rows.reverse().map((r) => ({
-    ts: r.ts,
-    agent: r.agent as AgentRole | 'hub',
-    level: r.level as 'info' | 'warn' | 'error',
-    message: r.message,
-  }))
-}
-
-function safeSend(
-  ws: WebSocket,
-  msg: HubToAgentMessage | HubToDashboardMessage,
-): void {
-  if (ws.readyState !== WebSocket.OPEN) return
-  try {
-    ws.send(JSON.stringify(msg))
-  } catch {
-    // best-effort
-  }
 }
 
 function logWarn(prefix: string, ...args: unknown[]): void {
@@ -203,8 +130,8 @@ export function handleAgentSocket(
     }
     return
   }
-  const row = findSessionByCode(deps.db, code)
-  if (!row) {
+  const session = getSessionByCode(deps.db, code)
+  if (!session) {
     try {
       ws.close(4404, 'session_not_found')
     } catch {
@@ -212,7 +139,7 @@ export function handleAgentSocket(
     }
     return
   }
-  if (row.expires_at <= Date.now()) {
+  if (session.expiresAt <= Date.now()) {
     try {
       ws.close(4410, 'session_expired')
     } catch {
@@ -221,7 +148,6 @@ export function handleAgentSocket(
     return
   }
 
-  const session = rowToSession(row)
   const room: Room = deps.registry.getOrCreate(session.id, session.code)
 
   // Role is set on receipt of `agent:hello`. Until then, this socket is
@@ -392,8 +318,8 @@ export function handleDashboardSocket(
     }
     return
   }
-  const row = findSessionById(deps.db, sessionId)
-  if (!row) {
+  const session = getSessionById(deps.db, sessionId)
+  if (!session) {
     try {
       ws.close(4404, 'session_not_found')
     } catch {
@@ -401,7 +327,7 @@ export function handleDashboardSocket(
     }
     return
   }
-  if (row.expires_at <= Date.now() && !row.completed_at) {
+  if (session.expiresAt <= Date.now() && session.completedAt == null) {
     try {
       ws.close(4410, 'session_expired')
     } catch {
@@ -410,7 +336,6 @@ export function handleDashboardSocket(
     return
   }
 
-  const session = rowToSession(row)
   const room: Room = deps.registry.getOrCreate(session.id, session.code)
   room.addDashboard(ws)
 
@@ -435,7 +360,7 @@ export function handleDashboardSocket(
   }
   safeSend(ws, agentsMsg)
 
-  for (const entry of recentLogs(deps.db, session.id)) {
+  for (const entry of getRecentAuditLogs(deps.db, session.id, 200)) {
     if (entry.agent === 'hub') continue // dashboard:log only carries agent roles
     const logMsg: HubToDashboardMessage = {
       type: 'dashboard:log',

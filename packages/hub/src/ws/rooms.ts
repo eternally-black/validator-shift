@@ -17,9 +17,10 @@ import type {
 
 /**
  * Serialize a hub-originated message and send over a single ws if it is open.
- * Returns true on a successful enqueue, false otherwise.
+ * Returns true on a successful enqueue, false otherwise. Exported so handler.ts
+ * can reuse it for snapshot fan-out without duplicating the readyState check.
  */
-function safeSend(
+export function safeSend(
   ws: WebSocket | undefined,
   msg: HubToAgentMessage | HubToDashboardMessage,
 ): boolean {

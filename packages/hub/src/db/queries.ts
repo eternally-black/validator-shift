@@ -77,6 +77,7 @@ interface Stmts {
   insertAudit: Database.Statement
   selectAuditBySession: Database.Statement
   selectAuditBySessionLimited: Database.Statement
+  selectRecentAudit: Database.Statement
   upsertStep: Database.Statement
   selectStepsBySession: Database.Statement
   selectRecentSessions: Database.Statement
@@ -119,6 +120,11 @@ function stmts(db: Database.Database): Stmts {
       `SELECT ts, agent, level, message
          FROM audit_log WHERE session_id = ?
          ORDER BY ts ASC, id ASC LIMIT ?`,
+    ),
+    selectRecentAudit: db.prepare(
+      `SELECT ts, agent, level, message
+         FROM audit_log WHERE session_id = ?
+         ORDER BY ts DESC, id DESC LIMIT ?`,
     ),
     upsertStep: db.prepare(
       `INSERT INTO migration_steps
@@ -273,6 +279,20 @@ export function getAuditLogs(
           limit,
         ) as AuditRow[])
   return rows.map(rowToLog)
+}
+
+/**
+ * Returns the N most recent audit-log rows in chronological (ASC) order.
+ * Useful for dashboard snapshots / GET /api/sessions/:id where callers want
+ * "the last N events" rather than "the first N".
+ */
+export function getRecentAuditLogs(
+  db: Database.Database,
+  sessionId: string,
+  limit: number,
+): LogEntry[] {
+  const rows = stmts(db).selectRecentAudit.all(sessionId, limit) as AuditRow[]
+  return rows.reverse().map(rowToLog)
 }
 
 // ---------- Migration steps -----------------------------------------------

@@ -18,6 +18,3 @@ export type { StatusDotProps, StatusDotStatus } from './StatusDot'
 
 export { CodeBlock } from './CodeBlock'
 export type { CodeBlockProps } from './CodeBlock'
-
-export { Stepper } from './Stepper'
-export type { StepperProps } from './Stepper'

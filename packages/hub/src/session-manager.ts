@@ -55,11 +55,10 @@ const generateSessionCode = customAlphabet(
 )
 
 /**
- * States from which the public DELETE /api/sessions/:id is allowed to
- * cancel. Mirrors the set in api/routes.ts — kept private here since
- * the manager's own `cancel()` is the single source of truth.
+ * States from which the public DELETE /api/sessions/:id is allowed to cancel.
+ * Exported so api/routes.ts can re-use the same gate without drift.
  */
-const CANCELLABLE_STATES: ReadonlySet<MigrationState> = new Set([
+export const CANCELLABLE_STATES: ReadonlySet<MigrationState> = new Set([
   MigrationState.IDLE,
   MigrationState.PAIRING,
 ])
@@ -375,35 +374,4 @@ export class SessionManager {
     // somehow exhausted the (36^6 ≈ 2.1B) space in a single process.
     return generateSessionCode()
   }
-}
-
-// ----------------------------------------------------------------------
-// Module-level helpers re-exported for callers that don't want to hold
-// a SessionManager reference. They simply delegate to the instance —
-// useful in places where only the message-routing facet is desired.
-// ----------------------------------------------------------------------
-
-export function handleAgentMessage(
-  manager: SessionManager,
-  sessionId: string,
-  role: AgentRole,
-  msg: AgentMessage,
-): void {
-  manager.handleAgentMessage(sessionId, role, msg)
-}
-
-export function handleDashboardMessage(
-  manager: SessionManager,
-  sessionId: string,
-  msg: DashboardMessage,
-): void {
-  manager.handleDashboardMessage(sessionId, msg)
-}
-
-export function handleAgentDisconnect(
-  manager: SessionManager,
-  sessionId: string,
-  role: AgentRole,
-): void {
-  manager.handleAgentDisconnect(sessionId, role)
 }
