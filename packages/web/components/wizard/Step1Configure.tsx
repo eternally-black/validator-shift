@@ -9,7 +9,12 @@ import { MigrationState } from '@validator-shift/shared'
 const ConfigSchema = z.object({
   ledgerPath: z.string().min(1, 'Ledger path is required'),
   keypairPath: z.string().min(1, 'Keypair path is required'),
-  hubUrl: z.string().regex(/^wss?:\/\/.+/, 'Hub URL must start with ws:// or wss://'),
+  hubUrl: z
+    .string()
+    .regex(
+      /^(https?|wss?):\/\/.+/,
+      'Hub URL must start with http(s):// or ws(s)://',
+    ),
 })
 
 type ConfigFields = z.infer<typeof ConfigSchema>
@@ -36,7 +41,7 @@ export function Step1Configure({ onNext }: Step1Props) {
   const [fields, setFields] = useState<ConfigFields>({
     ledgerPath: '',
     keypairPath: '',
-    hubUrl: 'ws://localhost:3002',
+    hubUrl: 'http://localhost:3001',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -140,7 +145,7 @@ export function Step1Configure({ onNext }: Step1Props) {
             id={hubId}
             value={fields.hubUrl}
             onChange={(e) => updateField('hubUrl')(e.target.value)}
-            placeholder="wss://hub.example.com"
+            placeholder="https://hub.example.com"
             aria-invalid={Boolean(fieldErrors.hubUrl)}
           />
           {fieldErrors.hubUrl && (
