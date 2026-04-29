@@ -77,5 +77,16 @@ export function getExecutor(step: number): AgentRole {
 /** Total number of migration steps (currently 9, per architecture v1.0). */
 export const TOTAL_STEPS = STEPS.length
 
+/**
+ * Steps that require BOTH agents to participate (source sends an
+ * encrypted payload, target receives + persists). The orchestrator
+ * broadcasts execute_step to both agents and must wait for both
+ * `agent:step_complete` acks before advancing — otherwise it would
+ * dispatch the next step to target before target has finished
+ * processing the relayed payload (race observed on step 5 → 6 where
+ * target's step 6 ran before its step 5 await landed the keypair).
+ */
+export const BILATERAL_STEPS: ReadonlySet<number> = new Set([4, 5])
+
 /** Re-export StepResult so callers can import from a single place. */
 export type { StepResult }

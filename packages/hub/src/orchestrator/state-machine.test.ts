@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { MigrationState, type PreflightCheck } from '@validator-shift/shared'
+import {
+  MigrationState,
+  type AgentRole,
+  type PreflightCheck,
+} from '@validator-shift/shared'
 import {
   MigrationOrchestrator,
   InvalidTransitionError,
 } from './state-machine.js'
+import { BILATERAL_STEPS, getExecutor } from './steps.js'
 
 const okCheck = (name: string): PreflightCheck => ({ name, ok: true })
 const failCheck = (name: string, detail = 'bad'): PreflightCheck => ({
@@ -13,6 +18,29 @@ const failCheck = (name: string, detail = 'bad'): PreflightCheck => ({
 })
 
 const okResult = { ok: true, durationMs: 10 }
+
+/**
+ * Ack a step completion. For bilateral steps both source and target
+ * acks are required to advance — passing both keeps tests focused on
+ * lifecycle rather than two-phase plumbing.
+ */
+function ackStep(o: MigrationOrchestrator, step: number): void {
+  if (BILATERAL_STEPS.has(step)) {
+    o.onStepComplete(step, 'source', okResult)
+    o.onStepComplete(step, 'target', okResult)
+  } else {
+    o.onStepComplete(step, getExecutor(step), okResult)
+  }
+}
+
+function failStep(
+  o: MigrationOrchestrator,
+  step: number,
+  role: AgentRole,
+  err: string,
+): void {
+  o.onStepFailed(step, role, err)
+}
 
 /**
  * Drive an orchestrator from IDLE all the way to MIGRATING (step 1
@@ -143,7 +171,7 @@ describe('MigrationOrchestrator / migrating + steps', () => {
     o.on('session_complete', onComplete)
     driveToMigrating(o)
     for (let step = 1; step <= 9; step += 1) {
-      o.onStepComplete(step, okResult)
+      ackStep(o, step)
     }
     expect(o.state).toBe(MigrationState.COMPLETE)
     expect(onComplete).toHaveBeenCalledTimes(1)
@@ -166,7 +194,7 @@ describe('MigrationOrchestrator / step failures', () => {
     o.on('rollback', onRollback)
     o.on('session_failed', onFailed)
     driveToMigrating(o)
-    o.onStepFailed(1, 'restart window timeout')
+    failStep(o, 1, 'source', 'restart window timeout')
     expect(o.state).toBe(MigrationState.FAILED)
     expect(onRollback).not.toHaveBeenCalled()
     expect(onFailed).toHaveBeenCalled()
@@ -182,25 +210,59 @@ describe('MigrationOrchestrator / step failures', () => {
     o.on('state_change', onState)
     driveToMigrating(o)
     // advance through steps 1..3 successfully
-    o.onStepComplete(1, okResult)
-    o.onStepComplete(2, okResult)
-    o.onStepComplete(3, okResult)
-    o.onStepFailed(4, 'transfer hash mismatch')
+    ackStep(o, 1)
+    ackStep(o, 2)
+    ackStep(o, 3)
+    failStep(o, 4, 'target', 'transfer hash mismatch')
     expect(o.state).toBe(MigrationState.FAILED)
     expect(onRollback).toHaveBeenCalledTimes(4)
     expect(onFailed).toHaveBeenCalled()
-    // we should have observed a ROLLBACK transition
     const rollbackTransition = onState.mock.calls.find(
       ([p]) => p.to === MigrationState.ROLLBACK,
     )
     expect(rollbackTransition).toBeTruthy()
   })
 
+  it('bilateral step waits for BOTH agents before advancing', () => {
+    const o = new MigrationOrchestrator('s')
+    const onExec = vi.fn()
+    o.on('execute_step', onExec)
+    driveToMigrating(o)
+    ackStep(o, 1)
+    ackStep(o, 2)
+    ackStep(o, 3)
+    onExec.mockClear()
+    // Source acks step 4 first — orchestrator must NOT dispatch step 5 yet.
+    o.onStepComplete(4, 'source', okResult)
+    expect(o.currentStep).toBe(4)
+    expect(onExec).not.toHaveBeenCalled()
+    // Target acks step 4 — now the gate opens.
+    o.onStepComplete(4, 'target', okResult)
+    expect(o.currentStep).toBe(5)
+    expect(onExec).toHaveBeenCalledWith({ role: 'source', step: 5 })
+  })
+
+  it('bilateral step fails on target after source ok → rollback', () => {
+    const o = new MigrationOrchestrator('s')
+    const onRollback = vi.fn()
+    o.on('rollback', onRollback)
+    driveToMigrating(o)
+    ackStep(o, 1)
+    ackStep(o, 2)
+    ackStep(o, 3)
+    o.onStepComplete(4, 'source', okResult)
+    // target reports failure on the same step → must rollback even though
+    // source has already acked OK.
+    failStep(o, 4, 'target', 'tower hash mismatch')
+    expect(o.state).toBe(MigrationState.FAILED)
+    expect(onRollback).toHaveBeenCalled()
+  })
+
   it('out-of-order onStepComplete is ignored (defensive)', () => {
     const o = new MigrationOrchestrator('s')
     driveToMigrating(o)
     // currentStep is 1; reporting step 5 done shouldn't advance.
-    o.onStepComplete(5, okResult)
+    o.onStepComplete(5, 'source', okResult)
     expect(o.currentStep).toBe(1)
   })
 })
@@ -221,8 +283,8 @@ describe('MigrationOrchestrator / abort', () => {
     const onRollback = vi.fn()
     o.on('rollback', onRollback)
     driveToMigrating(o)
-    o.onStepComplete(1, okResult)
-    o.onStepComplete(2, okResult) // currentStep = 3
+    ackStep(o, 1)
+    ackStep(o, 2) // currentStep = 3
     o.abort('operator stopped')
     expect(o.state).toBe(MigrationState.FAILED)
     expect(onRollback).toHaveBeenCalled()
@@ -283,9 +345,9 @@ describe('MigrationOrchestrator / disconnects', () => {
     const onRollback = vi.fn()
     o.on('rollback', onRollback)
     driveToMigrating(o)
-    o.onStepComplete(1, okResult)
-    o.onStepComplete(2, okResult)
-    o.onStepComplete(3, okResult) // currentStep = 4, < 5
+    ackStep(o, 1)
+    ackStep(o, 2)
+    ackStep(o, 3) // currentStep = 4, < 5
     o.onAgentDisconnected('source')
     expect(o.state).toBe(MigrationState.FAILED) // ROLLBACK → FAILED
     expect(onRollback).toHaveBeenCalled()
@@ -296,7 +358,7 @@ describe('MigrationOrchestrator / disconnects', () => {
     const onAlert = vi.fn()
     o.on('critical_alert', onAlert)
     driveToMigrating(o)
-    for (let step = 1; step <= 5; step += 1) o.onStepComplete(step, okResult)
+    for (let step = 1; step <= 5; step += 1) ackStep(o, step)
     // currentStep is now 6 (>= 5)
     o.onAgentDisconnected('target')
     expect(o.state).toBe(MigrationState.MIGRATING)
@@ -309,7 +371,7 @@ describe('MigrationOrchestrator / disconnects', () => {
     const onRollback = vi.fn()
     o.on('rollback', onRollback)
     driveToMigrating(o)
-    for (let step = 1; step <= 5; step += 1) o.onStepComplete(step, okResult)
+    for (let step = 1; step <= 5; step += 1) ackStep(o, step)
     o.onAgentDisconnected('source')
     // source-side rollback isn't safe at this point either, since the
     // keypair has already moved. We stay put and wait for the operator.
@@ -341,7 +403,7 @@ describe('MigrationOrchestrator / forbidden transitions', () => {
     // late events on terminal state are ignored without throwing
     expect(() => o.onAgentConnected('source')).not.toThrow()
     expect(() => o.onSasConfirmed('source')).not.toThrow()
-    expect(() => o.onStepComplete(1, okResult)).not.toThrow()
+    expect(() => o.onStepComplete(1, 'source', okResult)).not.toThrow()
     expect(o.state).toBe(MigrationState.FAILED)
   })
 })

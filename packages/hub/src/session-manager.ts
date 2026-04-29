@@ -40,6 +40,7 @@ import {
   updateSessionState as dbUpdateSessionState,
 } from './db/queries.js'
 import { MigrationOrchestrator } from './orchestrator/state-machine.js'
+import { BILATERAL_STEPS } from './orchestrator/steps.js'
 import type { RoomRegistry } from './ws/rooms.js'
 
 /**
@@ -226,10 +227,10 @@ export class SessionManager {
         orchestrator.onPreflightResult(role, msg.checks)
         return
       case 'agent:step_complete':
-        orchestrator.onStepComplete(msg.step, msg.result)
+        orchestrator.onStepComplete(msg.step, role, msg.result)
         return
       case 'agent:step_failed':
-        orchestrator.onStepFailed(msg.step, msg.error)
+        orchestrator.onStepFailed(msg.step, role, msg.error)
         return
       // `agent:encrypted_payload` and `agent:log` are handled in the WS
       // layer (relay + audit-log respectively) and never reach us.
@@ -336,11 +337,13 @@ export class SessionManager {
         type: 'hub:execute_step',
         step: payload.step,
       }
-      // Steps 4 and 5 are bilateral relays: source encrypts and sends, target
-      // decrypts, verifies hash + pubkey, and persists. Both sides need the
-      // execute_step trigger so target's `waitForPending` actually runs and
-      // the staked path/source pubkey land in StepCtx before step 6.
-      if (payload.step === 4 || payload.step === 5) {
+      // Bilateral relays: source encrypts and sends, target decrypts,
+      // verifies hash + pubkey, and persists. Both sides need the
+      // execute_step trigger so target's `waitForPending` actually runs
+      // and the staked path/source pubkey land in StepCtx before the
+      // next step. The orchestrator gates advancement on BOTH agents'
+      // acks for these steps (see state-machine.onStepComplete).
+      if (BILATERAL_STEPS.has(payload.step)) {
         room.sendToAgent('source', agentMsg)
         room.sendToAgent('target', agentMsg)
       } else {

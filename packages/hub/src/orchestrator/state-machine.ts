@@ -6,7 +6,7 @@ import {
   type StepResult,
   type MigrationSummary,
 } from '@validator-shift/shared'
-import { getExecutor, nextStep, TOTAL_STEPS } from './steps.js'
+import { BILATERAL_STEPS, getExecutor, nextStep, TOTAL_STEPS } from './steps.js'
 import { getRollbackSteps, shouldRollback, type RollbackStep } from './rollback.js'
 
 /**
@@ -131,6 +131,14 @@ export class MigrationOrchestrator extends EventEmitter {
   private _stepsCompleted = 0
   private _started = false
   private _migrationStartedAt: number | null = null
+  /**
+   * Per-step set of roles that have acked `agent:step_complete`. Only
+   * meaningful for steps in BILATERAL_STEPS — for unilateral steps the
+   * single executor's ack advances immediately. Cleared once a bilateral
+   * step's gate passes; entries for non-current steps are pruned by the
+   * `step !== currentStep` guard at call time.
+   */
+  private readonly _bilateralAcks: Map<number, Set<AgentRole>> = new Map()
 
   constructor(sessionId: string) {
     super()
@@ -331,10 +339,28 @@ export class MigrationOrchestrator extends EventEmitter {
    * Agent reports a step succeeded. Advance to the next step, or — if
    * we just finished the final step — emit session_complete and move
    * to COMPLETE. Steps reported out of order are ignored (defensive).
+   *
+   * Bilateral steps (BILATERAL_STEPS) require BOTH source and target to
+   * ack before advancing. Without this gate, source rapidly reports
+   * step 5 complete after sending the encrypted identity payload and
+   * the orchestrator dispatches step 6 to target before target's step 5
+   * handler has consumed the payload from the relay queue — resulting
+   * in `staked keypair not received before step 6`.
    */
-  onStepComplete(step: number, _result: StepResult): void {
+  onStepComplete(step: number, role: AgentRole, _result: StepResult): void {
     if (this._state !== MigrationState.MIGRATING) return
     if (step !== this._currentStep) return // stale / duplicate
+
+    if (BILATERAL_STEPS.has(step)) {
+      let acks = this._bilateralAcks.get(step)
+      if (!acks) {
+        acks = new Set()
+        this._bilateralAcks.set(step, acks)
+      }
+      acks.add(role)
+      if (!(acks.has('source') && acks.has('target'))) return
+      this._bilateralAcks.delete(step)
+    }
 
     this._stepsCompleted += 1
     const next = nextStep(step)
@@ -352,15 +378,18 @@ export class MigrationOrchestrator extends EventEmitter {
    *   - Failure on step 1 (wait_for_restart_window) → no validator
    *     state changed yet → straight to FAILED, no rollback.
    *   - Failure on step ≥ 2 → ROLLBACK.
+   *
+   * On bilateral steps, a failure from EITHER side trips rollback
+   * immediately — we don't wait for the other agent's ack first.
    */
-  onStepFailed(step: number, error: string): void {
+  onStepFailed(step: number, role: AgentRole, error: string): void {
     if (this._state !== MigrationState.MIGRATING) return
     if (step !== this._currentStep) return
 
     if (shouldRollback(step)) {
-      this.beginRollback(`step ${step} failed: ${error}`)
+      this.beginRollback(`step ${step} failed on ${role}: ${error}`)
     } else {
-      const reason = `step ${step} failed: ${error}`
+      const reason = `step ${step} failed on ${role}: ${error}`
       this.transition(MigrationState.FAILED, reason)
       this.emit('session_failed', { reason })
     }
