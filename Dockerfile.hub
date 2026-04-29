@@ -18,7 +18,7 @@ COPY packages/hub/package.json    ./packages/hub/package.json
 COPY packages/agent/package.json  ./packages/agent/package.json
 COPY packages/web/package.json    ./packages/web/package.json
 
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=hub-npm-deps,target=/root/.npm,sharing=locked \
     npm ci --prefer-offline --no-audit --fund=false
 
 # =============================================================================
@@ -51,7 +51,7 @@ COPY packages/hub/package.json    ./packages/hub/package.json
 COPY packages/agent/package.json  ./packages/agent/package.json
 COPY packages/web/package.json    ./packages/web/package.json
 
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=hub-npm-prod,target=/root/.npm,sharing=locked \
     npm ci --omit=dev --prefer-offline --no-audit --fund=false
 
 # =============================================================================
@@ -83,10 +83,12 @@ COPY --from=prod-deps --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nodejs:nodejs /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=nodejs:nodejs /app/packages/hub/dist    ./packages/hub/dist
 
-# /app/data is the SQLite mount-point. Owned by the runtime user so a named
-# volume (recommended) inherits the correct uid/gid on first creation.
+# /app/data is the SQLite mount-point. Owned by the runtime user so an
+# externally-attached volume (Railway / docker-compose named volume)
+# inherits the correct uid/gid on first creation.
+# NOTE: no VOLUME directive — Railway rejects it; mount is declared in
+# the platform config (railway.toml volume / compose service.volumes).
 RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
-VOLUME ["/app/data"]
 
 USER nodejs
 

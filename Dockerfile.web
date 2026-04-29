@@ -22,7 +22,7 @@ COPY packages/web/package.json    ./packages/web/package.json
 COPY packages/hub/package.json    ./packages/hub/package.json
 COPY packages/agent/package.json  ./packages/agent/package.json
 
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=web-npm-deps,target=/root/.npm,sharing=locked \
     npm ci --prefer-offline --no-audit --fund=false
 
 # =============================================================================
