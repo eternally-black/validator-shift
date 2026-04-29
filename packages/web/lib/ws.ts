@@ -11,7 +11,19 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'
 export interface DashboardClientOpts {
   sessionId: string
   hubWsUrl: string
+  /**
+   * Bearer token returned by POST /api/sessions. Required by the hub —
+   * connections without a valid token are closed with code 4401.
+   */
+  token: string
 }
+
+/**
+ * Cap reconnect attempts to prevent a tab on a dead session from holding
+ * a hub connection slot indefinitely. ~30 attempts in <8 minutes given
+ * the exponential backoff capped at 15s.
+ */
+const MAX_RECONNECT_ATTEMPTS = 30
 
 type MessageHandler = (msg: HubToDashboardMessage) => void
 type StatusHandler = (status: ConnectionStatus) => void
@@ -31,6 +43,7 @@ const isDev =
 export class DashboardClient {
   private readonly sessionId: string
   private readonly hubWsUrl: string
+  private readonly token: string
 
   private ws: WebSocket | null = null
   private messageHandlers = new Set<MessageHandler>()
@@ -44,6 +57,7 @@ export class DashboardClient {
   constructor(opts: DashboardClientOpts) {
     this.sessionId = opts.sessionId
     this.hubWsUrl = opts.hubWsUrl.replace(/\/+$/, '')
+    this.token = opts.token
   }
 
   connect(): void {
@@ -107,7 +121,7 @@ export class DashboardClient {
       this.reconnectTimer = null
     }
 
-    const url = `${this.hubWsUrl}/ws/dashboard/${this.sessionId}`
+    const url = `${this.hubWsUrl}/ws/dashboard/${encodeURIComponent(this.sessionId)}?token=${encodeURIComponent(this.token)}`
     this.setStatus('connecting')
 
     let socket: WebSocket
@@ -180,6 +194,16 @@ export class DashboardClient {
 
   private scheduleReconnect(): void {
     if (this.intentionallyClosed) return
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      if (isDev) {
+        console.warn(
+          `[DashboardClient] reconnect attempts exceeded (${MAX_RECONNECT_ATTEMPTS}); giving up`,
+        )
+      }
+      this.setStatus('error')
+      this.intentionallyClosed = true
+      return
+    }
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000)
     this.reconnectAttempts += 1
     this.reconnectTimer = setTimeout(() => {

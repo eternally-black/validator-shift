@@ -65,11 +65,11 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
           </h2>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-neutral-500">Source server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role source --session ${sessionCode}`}</CodeBlock>
+            <CodeBlock>{`npx @validator-shift/agent --role source --session ${sessionCode} \\\n  --hub wss://your-hub:3002 \\\n  --ledger /mnt/ledger \\\n  --keypair /etc/solana/validator-keypair.json \\\n  --identity-pubkey <staked-validator-pubkey>`}</CodeBlock>
           </div>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-neutral-500">Target server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role target --session ${sessionCode}`}</CodeBlock>
+            <CodeBlock>{`npx @validator-shift/agent --role target --session ${sessionCode} \\\n  --hub wss://your-hub:3002 \\\n  --ledger /mnt/ledger`}</CodeBlock>
           </div>
         </div>
       </Card>

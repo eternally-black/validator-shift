@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MigrationState, type AgentRole } from '@validator-shift/shared'
+import { SESSION_TTL_MS } from '@validator-shift/shared/constants'
 
 /**
  * Path params: { id: string }
@@ -18,23 +19,27 @@ export const ListSessionsQuerySchema = z.object({
 export type ListSessionsQuery = z.infer<typeof ListSessionsQuerySchema>
 
 /**
- * Body for POST /api/sessions (currently empty — server allocates id/code).
+ * Body for POST /api/sessions. `ttlMs` is capped at SESSION_TTL_MS to prevent
+ * unbounded session lifetimes (memory-DoS via the Room registry).
  */
 export const CreateSessionBodySchema = z
   .object({
-    ttlMs: z.number().int().positive().optional(),
+    ttlMs: z.number().int().positive().max(SESSION_TTL_MS).optional(),
   })
   .strict()
   .optional()
 export type CreateSessionBody = z.infer<typeof CreateSessionBodySchema>
 
 /**
- * Response for POST /api/sessions
+ * Response for POST /api/sessions. `dashboardToken` is the bearer that the
+ * Web UI must supply on the dashboard WS query string — only the creator of
+ * the session sees it, so anonymous third-parties cannot abort or eavesdrop.
  */
 export const CreateSessionResponseSchema = z.object({
   id: z.string(),
   code: z.string(),
   expiresAt: z.number().int(),
+  dashboardToken: z.string().min(16),
 })
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
 

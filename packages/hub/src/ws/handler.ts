@@ -23,6 +23,7 @@ import {
   type HubToAgentMessage,
   type HubToDashboardMessage,
 } from '@validator-shift/shared/protocol'
+import { redactSecrets, isValidSessionCode } from '@validator-shift/shared/redact'
 import type { Room, RoomRegistry } from './rooms.js'
 
 // ---------- Dependency contract ----------
@@ -39,6 +40,34 @@ export interface HandlerDeps {
     handleDashboardMessage(sessionId: string, msg: DashboardMessage): void
     handleAgentDisconnect(sessionId: string, role: AgentRole): void
   }
+  /**
+   * Verifies a dashboard bearer token issued at session creation. Required
+   * for /ws/dashboard/:id connections — without this gate, anyone who
+   * discovers a session id can drive `dashboard:abort`.
+   */
+  verifyDashboardToken: (sessionId: string, token: string) => boolean
+}
+
+// ---------- WS connection rate-limit (defence against brute-force) ----------
+
+interface WsRateState {
+  count: number
+  windowStart: number
+}
+const WS_RATE_WINDOW_MS = 60_000
+const WS_RATE_MAX = 30 // connections per minute per IP
+const wsRate: Map<string, WsRateState> = new Map()
+
+function wsRateLimitExceeded(ip: string | undefined): boolean {
+  if (!ip) return false
+  const now = Date.now()
+  const cur = wsRate.get(ip)
+  if (!cur || now - cur.windowStart > WS_RATE_WINDOW_MS) {
+    wsRate.set(ip, { count: 1, windowStart: now })
+    return false
+  }
+  cur.count++
+  return cur.count > WS_RATE_MAX
 }
 
 // ---------- Internal helpers ----------
@@ -156,7 +185,24 @@ export function handleAgentSocket(
   ws: WebSocket,
   code: string,
   deps: HandlerDeps,
+  ip?: string,
 ): void {
+  if (!isValidSessionCode(code)) {
+    try {
+      ws.close(4400, 'invalid_session_code')
+    } catch {
+      // ignore
+    }
+    return
+  }
+  if (wsRateLimitExceeded(ip)) {
+    try {
+      ws.close(4429, 'rate_limited')
+    } catch {
+      // ignore
+    }
+    return
+  }
   const row = findSessionByCode(deps.db, code)
   if (!row) {
     try {
@@ -257,18 +303,22 @@ export function handleAgentSocket(
           logWarn('agent: log before hello', { sessionId: session.id })
           return
         }
+        // M-1: hub-side defence in depth. Even though the agent is supposed
+        // to redact its own logs, a malicious peer could craft an unredacted
+        // payload to leak through dashboards. Re-redact on the boundary.
+        const safeMessage = redactSecrets(msg.message)
         const ts = appendAuditLog(
           deps.db,
           session.id,
           role,
           msg.level,
-          msg.message,
+          safeMessage,
         )
         const broadcast: HubToDashboardMessage = {
           type: 'dashboard:log',
           agent: role,
           level: msg.level,
-          message: msg.message,
+          message: safeMessage,
           ts,
         }
         room.broadcastToDashboards(broadcast)
@@ -319,8 +369,29 @@ export function handleAgentSocket(
 export function handleDashboardSocket(
   ws: WebSocket,
   sessionId: string,
+  token: string | undefined,
   deps: HandlerDeps,
+  ip?: string,
 ): void {
+  if (wsRateLimitExceeded(ip)) {
+    try {
+      ws.close(4429, 'rate_limited')
+    } catch {
+      // ignore
+    }
+    return
+  }
+  // H-4: every dashboard connection must carry the bearer token returned
+  // by POST /api/sessions. Anyone who only knows the session id (which
+  // leaks via the public list endpoint) cannot abort or eavesdrop.
+  if (!token || !deps.verifyDashboardToken(sessionId, token)) {
+    try {
+      ws.close(4401, 'unauthorized')
+    } catch {
+      // ignore
+    }
+    return
+  }
   const row = findSessionById(deps.db, sessionId)
   if (!row) {
     try {

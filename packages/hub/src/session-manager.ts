@@ -13,6 +13,7 @@
  * or secrets ever pass through this manager. We deal in session metadata
  * + state-machine events only.
  */
+import { randomBytes } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { customAlphabet } from 'nanoid'
 import {
@@ -67,6 +68,13 @@ export class SessionManager {
   private readonly db: Database.Database
   private readonly registry: RoomRegistry
   private readonly orchestrators: Map<string, MigrationOrchestrator> = new Map()
+  /**
+   * Per-session bearer token returned to the wizard on POST /api/sessions
+   * and required on the dashboard WS query string. Lives in-memory only
+   * (intentionally NOT persisted) — token is the only authorization the
+   * hub has for `dashboard:abort` and live-log streaming.
+   */
+  private readonly dashboardTokens: Map<string, string> = new Map()
 
   constructor(db: Database.Database, registry: RoomRegistry) {
     this.db = db
@@ -85,7 +93,12 @@ export class SessionManager {
    * that fire before the first dashboard connects (e.g. an agent that
    * connects before the operator opens the wizard) still have a target.
    */
-  create(opts: { ttlMs: number }): { id: string; code: string; expiresAt: number } {
+  create(opts: { ttlMs: number }): {
+    id: string
+    code: string
+    expiresAt: number
+    dashboardToken: string
+  } {
     const code = this.allocateUniqueCode()
     const session = dbCreateSession(this.db, { code, ttlMs: opts.ttlMs })
 
@@ -97,11 +110,31 @@ export class SessionManager {
     this.wireOrchestrator(session.id, orchestrator)
     orchestrator.start()
 
+    // 24 random bytes → 32-char base64url token. Never persisted.
+    const dashboardToken = randomBytes(24).toString('base64url')
+    this.dashboardTokens.set(session.id, dashboardToken)
+
     return {
       id: session.id,
       code: session.code,
       expiresAt: session.expiresAt,
+      dashboardToken,
     }
+  }
+
+  /**
+   * Constant-time comparison of a candidate token against the stored one.
+   * Returns false if the session is unknown.
+   */
+  verifyDashboardToken(sessionId: string, token: string): boolean {
+    const expected = this.dashboardTokens.get(sessionId)
+    if (!expected) return false
+    if (expected.length !== token.length) return false
+    let diff = 0
+    for (let i = 0; i < expected.length; i++) {
+      diff |= expected.charCodeAt(i) ^ token.charCodeAt(i)
+    }
+    return diff === 0
   }
 
   /**

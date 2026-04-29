@@ -33,6 +33,13 @@ export interface SessionStoreState {
   lastError: string | null
   connection: ConnectionStatus
   summary: MigrationSummary | null
+  /**
+   * Bearer token returned by POST /api/sessions. Required to open the
+   * dashboard WebSocket — without it the hub closes the connection 4401.
+   * Lives only in client memory; never persisted (plain object, not in
+   * sessionStorage).
+   */
+  dashboardToken: string | null
 
   // Internal — kept in state so subscribers don't accidentally serialize it,
   // but exposed via attach/detach actions only.
@@ -40,6 +47,7 @@ export interface SessionStoreState {
 
   // ---- actions ----
   setSession: (session: Session | null) => void
+  setDashboardToken: (token: string | null) => void
   setState: (state: MigrationState) => void
   setAgents: (agents: Partial<{ source: AgentStatus; target: AgentStatus }>) => void
   setPreflight: (checks: PreflightCheck[]) => void
@@ -64,6 +72,7 @@ const defaultAgents = (): { source: AgentStatus; target: AgentStatus } => ({
 const initialState = (): Omit<
   SessionStoreState,
   | 'setSession'
+  | 'setDashboardToken'
   | 'setState'
   | 'setAgents'
   | 'setPreflight'
@@ -88,6 +97,7 @@ const initialState = (): Omit<
   lastError: null,
   connection: 'closed',
   summary: null,
+  dashboardToken: null,
   _client: null,
 })
 
@@ -96,6 +106,8 @@ export const useSessionStore: UseBoundStore<StoreApi<SessionStoreState>> =
     ...initialState(),
 
     setSession: (session) => set({ session }),
+
+    setDashboardToken: (token) => set({ dashboardToken: token }),
 
     setState: (state) => set({ state }),
 

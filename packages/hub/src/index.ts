@@ -36,20 +36,6 @@ import { SessionManager } from './session-manager.js'
 const AGENT_PATH_RE = /^\/ws\/session\/([^/?#]+)\/?$/
 const DASHBOARD_PATH_RE = /^\/ws\/dashboard\/([^/?#]+)\/?$/
 
-/**
- * Extract the path portion of a request URL without throwing on
- * relative inputs. ws gives us `req.url` as a path-relative string,
- * so we have to provide a synthetic base for `URL`.
- */
-function pathOf(rawUrl: string | undefined): string {
-  if (!rawUrl) return '/'
-  try {
-    return new URL(rawUrl, 'http://localhost').pathname
-  } catch {
-    return rawUrl.split('?')[0] ?? '/'
-  }
-}
-
 // ---------- Main -----------------------------------------------------
 
 export async function main(): Promise<void> {
@@ -85,42 +71,43 @@ export async function main(): Promise<void> {
     : DEFAULT_HUB_WS_PORT
   const wsServer = new WebSocketServer({ port: wsPort, host: '0.0.0.0' })
 
+  const handlerDeps = {
+    db,
+    registry,
+    orchestrator: {
+      handleAgentMessage: (sessionId: string, role: 'source' | 'target', msg: any) =>
+        sessionManager.handleAgentMessage(sessionId, role, msg),
+      handleDashboardMessage: (sessionId: string, msg: any) =>
+        sessionManager.handleDashboardMessage(sessionId, msg),
+      handleAgentDisconnect: (sessionId: string, role: 'source' | 'target') =>
+        sessionManager.handleAgentDisconnect(sessionId, role),
+    },
+    verifyDashboardToken: (sessionId: string, token: string) =>
+      sessionManager.verifyDashboardToken(sessionId, token),
+  }
+
   wsServer.on('connection', (ws: WebSocket, req) => {
-    const path = pathOf(req.url)
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const path = url.pathname
+    // Express the client IP as best-effort. Behind a proxy the operator
+    // should configure Fastify trust-proxy and pass it via headers; here
+    // we use the raw socket address as a baseline.
+    const ip =
+      (req.socket && (req.socket as any).remoteAddress) ||
+      req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim()
 
     const agentMatch = AGENT_PATH_RE.exec(path)
     if (agentMatch) {
       const code = decodeURIComponent(agentMatch[1] ?? '')
-      handleAgentSocket(ws, code, {
-        db,
-        registry,
-        orchestrator: {
-          handleAgentMessage: (sessionId, role, msg) =>
-            sessionManager.handleAgentMessage(sessionId, role, msg),
-          handleDashboardMessage: (sessionId, msg) =>
-            sessionManager.handleDashboardMessage(sessionId, msg),
-          handleAgentDisconnect: (sessionId, role) =>
-            sessionManager.handleAgentDisconnect(sessionId, role),
-        },
-      })
+      handleAgentSocket(ws, code, handlerDeps, ip)
       return
     }
 
     const dashboardMatch = DASHBOARD_PATH_RE.exec(path)
     if (dashboardMatch) {
       const id = decodeURIComponent(dashboardMatch[1] ?? '')
-      handleDashboardSocket(ws, id, {
-        db,
-        registry,
-        orchestrator: {
-          handleAgentMessage: (sessionId, role, msg) =>
-            sessionManager.handleAgentMessage(sessionId, role, msg),
-          handleDashboardMessage: (sessionId, msg) =>
-            sessionManager.handleDashboardMessage(sessionId, msg),
-          handleAgentDisconnect: (sessionId, role) =>
-            sessionManager.handleAgentDisconnect(sessionId, role),
-        },
-      })
+      const token = url.searchParams.get('token') ?? undefined
+      handleDashboardSocket(ws, id, token, handlerDeps, ip)
       return
     }
 

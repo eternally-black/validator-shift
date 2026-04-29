@@ -25,18 +25,19 @@ export default function SessionPage() {
 
   const state = useSessionStore((s) => s.state)
   const startedAt = useSessionStore((s) => s.summary?.startedAt ?? null)
+  const dashboardToken = useSessionStore((s) => s.dashboardToken)
 
   useEffect(() => {
-    if (!id) return
+    if (!id || !dashboardToken) return
     const hubWsUrl = process.env.NEXT_PUBLIC_HUB_URL ?? 'ws://localhost:3002'
-    const client = new DashboardClient({ sessionId: id, hubWsUrl })
+    const client = new DashboardClient({ sessionId: id, hubWsUrl, token: dashboardToken })
     const detach = wireClientToStore(client, useSessionStore)
     client.connect()
     return () => {
       detach?.()
       client.disconnect()
     }
-  }, [id])
+  }, [id, dashboardToken])
 
   return (
     <div className="text-zinc-200">

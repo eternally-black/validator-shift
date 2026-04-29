@@ -38,6 +38,11 @@ program
     'auto-confirm destructive operations (set-identity, authorized-voter, secure-wipe). Use only in fully attended automation.',
     false,
   )
+  .option(
+    '--insecure-ws',
+    'allow plain ws:// to a non-localhost hub. Default refuses unless the hub host is localhost / 127.0.0.1.',
+    false,
+  )
   .action(async (raw: Record<string, string | boolean | undefined>) => {
     try {
       if (raw.role !== 'source' && raw.role !== 'target') {
@@ -50,6 +55,23 @@ program
         throw new Error(
           '--identity-pubkey is required when --role=source (must match the running validator\'s --identity flag)',
         )
+      }
+
+      // H-3: refuse plain ws:// to a non-loopback host. SAS still detects MITM,
+      // but we should never normalize plaintext WebSocket in production.
+      const hubUrl = String(raw.hub)
+      const parsed = new URL(hubUrl)
+      const isLoopback =
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '[::1]'
+      if (parsed.protocol === 'ws:' && !isLoopback && raw.insecureWs !== true) {
+        throw new Error(
+          `--hub uses plain ws:// to ${parsed.hostname}. Use wss:// or pass --insecure-ws (not recommended).`,
+        )
+      }
+      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+        throw new Error(`--hub must use ws:// or wss:// (got ${parsed.protocol})`)
       }
 
       const opts: AgentOpts = {

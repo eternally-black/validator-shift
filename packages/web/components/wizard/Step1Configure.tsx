@@ -23,6 +23,7 @@ interface CreateSessionResponse {
   id: string
   code: string
   expiresAt: number
+  dashboardToken: string
 }
 
 const HUB_API_URL = process.env.NEXT_PUBLIC_HUB_API_URL ?? ''
@@ -77,13 +78,15 @@ export function Step1Configure({ onNext }: Step1Props) {
           throw new Error(`Failed to create session: ${res.status}`)
         }
         const data = (await res.json()) as CreateSessionResponse
-        useSessionStore.getState().setSession({
+        const store = useSessionStore.getState()
+        store.setSession({
           id: data.id,
           code: data.code,
           expiresAt: data.expiresAt,
           state: MigrationState.IDLE,
           createdAt: Date.now(),
         })
+        store.setDashboardToken(data.dashboardToken)
         onNext()
       } catch (err) {
         setSubmitError(err instanceof Error ? err.message : 'Unknown error')

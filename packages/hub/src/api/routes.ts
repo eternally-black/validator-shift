@@ -43,7 +43,12 @@ export interface SessionWithAgents extends Session {
 export interface RouteDeps {
   db: import('better-sqlite3').Database
   sessionManager: {
-    create(opts: { ttlMs: number }): { id: string; code: string; expiresAt: number }
+    create(opts: { ttlMs: number }): {
+      id: string
+      code: string
+      expiresAt: number
+      dashboardToken: string
+    }
     getById(id: string): SessionWithAgents | null
     listRecent(limit: number): Session[]
     cancel(id: string): boolean
@@ -144,6 +149,7 @@ export async function registerRoutes(
         id: created.id,
         code: created.code,
         expiresAt: created.expiresAt,
+        dashboardToken: created.dashboardToken,
       }
       return reply.code(201).send(body)
     },

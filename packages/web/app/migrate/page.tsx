@@ -15,13 +15,15 @@ const HUB_WS_URL = process.env.NEXT_PUBLIC_HUB_URL ?? 'ws://localhost:3002'
 export default function MigratePage() {
   const [step, setStep] = useState<WizardStep>(1)
   const sessionId = useSessionStore((s) => s.session?.id ?? null)
+  const dashboardToken = useSessionStore((s) => s.dashboardToken)
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || !dashboardToken) return
 
     const client = new DashboardClient({
       sessionId,
       hubWsUrl: HUB_WS_URL,
+      token: dashboardToken,
     })
 
     const unwire = wireClientToStore(client, useSessionStore)
@@ -31,7 +33,7 @@ export default function MigratePage() {
       client.disconnect()
       unwire?.()
     }
-  }, [sessionId])
+  }, [sessionId, dashboardToken])
 
   const goToStep2 = useCallback(() => setStep(2), [])
   const goToStep3 = useCallback(() => setStep(3), [])

@@ -3,6 +3,9 @@ import ora, { type Ora } from 'ora'
 import inquirer from 'inquirer'
 import type { PreflightCheck, MigrationSummary } from '@validator-shift/shared'
 import { MIGRATION_STEPS } from '@validator-shift/shared/constants'
+import { redactSecrets } from '@validator-shift/shared/redact'
+
+export { redactSecrets }
 
 const PHOSPHOR = '#00FF41'
 const AMBER = '#FFB000'
@@ -36,19 +39,6 @@ function formatDuration(ms: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}m${s}s`
-}
-
-/**
- * Strip likely secret material from a string before logging or sending it
- * over the wire. Targets:
- *   - 64-byte JSON arrays (Solana keypair format)
- *   - Long contiguous base64 blobs (encrypted payloads, raw secret keys)
- */
-export function redactSecrets(text: string): string {
-  if (!text) return text
-  return text
-    .replace(/\[(\s*\d+\s*,\s*){63,}\s*\d+\s*\]/g, '[REDACTED:secret-bytes]')
-    .replace(/[A-Za-z0-9+/]{60,}={0,2}/g, (m) => `[REDACTED:base64:${m.length}]`)
 }
 
 /**
@@ -163,10 +153,10 @@ export function printError(err: unknown): void {
   }
 
   // eslint-disable-next-line no-console
-  console.error(`${mark} ${chalk.red(message)}`)
+  console.error(`${mark} ${chalk.red(redactSecrets(message))}`)
   if (extra) {
     // eslint-disable-next-line no-console
-    console.error(chalk.dim(extra))
+    console.error(chalk.dim(redactSecrets(extra)))
   }
 }
 
