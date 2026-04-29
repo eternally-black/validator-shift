@@ -622,7 +622,23 @@ async function executeStep(
       }
       // CR-1: poll gossip / validators until source has stopped voting.
       // This is the critical anti-dual-identity gate.
-      await waitForSourceQuiet(sourcePk, SOURCE_QUIET_TIMEOUT_MS)
+      //
+      // Single-validator localnet escape hatch: a localnet with only one
+      // staked validator stalls the moment source switches to unstaked
+      // identity (no quorum left). `lastVote` and `current_slot` freeze
+      // together, so `delinquent` never flips and the gate hangs forever.
+      // Production migrations MUST NOT set this flag — bypassing the
+      // anti-dual-identity gate is the dual-signing scenario this whole
+      // tool is designed to avoid.
+      if (process.env.VS_SKIP_QUIET_GATE === '1') {
+        logBoth(
+          client,
+          'warn',
+          'anti-dual-identity gate skipped via VS_SKIP_QUIET_GATE=1 (UNSAFE outside localnet)',
+        )
+      } else {
+        await waitForSourceQuiet(sourcePk, SOURCE_QUIET_TIMEOUT_MS)
+      }
       if (!opts.yes) {
         const ok = await confirmDestructive(
           `Activate staked identity on TARGET (ledger=${opts.ledger}, identity=${sourcePk.slice(0, 8)}…)? Source has been verified inactive.`,
