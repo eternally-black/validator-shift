@@ -18,8 +18,7 @@ COPY packages/hub/package.json    ./packages/hub/package.json
 COPY packages/agent/package.json  ./packages/agent/package.json
 COPY packages/web/package.json    ./packages/web/package.json
 
-RUN --mount=type=cache,id=hub-npm-deps,target=/root/.npm,sharing=locked \
-    npm ci --prefer-offline --no-audit --fund=false
+RUN npm ci --prefer-offline --no-audit --fund=false
 
 # =============================================================================
 # Stage 2: build — compile shared + hub TS to JS (dist/)
@@ -51,8 +50,7 @@ COPY packages/hub/package.json    ./packages/hub/package.json
 COPY packages/agent/package.json  ./packages/agent/package.json
 COPY packages/web/package.json    ./packages/web/package.json
 
-RUN --mount=type=cache,id=hub-npm-prod,target=/root/.npm,sharing=locked \
-    npm ci --omit=dev --prefer-offline --no-audit --fund=false
+RUN npm ci --omit=dev --prefer-offline --no-audit --fund=false
 
 # =============================================================================
 # Stage 4: runtime — slim, no toolchain, non-root
