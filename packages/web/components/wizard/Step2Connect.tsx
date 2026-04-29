@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { MigrationState } from '@validator-shift/shared'
 import { Button, Card, CodeBlock, StatusDot } from '@/components/ui'
 import { useSessionStore } from '@/lib/store'
@@ -16,6 +16,16 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
   const targetConnected = useSessionStore((s) => s.agents.target.connected)
   const state = useSessionStore((s) => s.state)
   const sas = useSessionStore((s) => s.sas)
+
+  // Auto-advance once both agents have confirmed SAS in their terminals and
+  // the orchestrator has moved past PAIRING. Without this, the wizard waits
+  // for an in-UI SAS-confirm click that never gets a SAS to display (we
+  // don't currently broadcast the SAS to dashboards).
+  useEffect(() => {
+    if (state !== MigrationState.IDLE && state !== MigrationState.PAIRING) {
+      onNext()
+    }
+  }, [state, onNext])
 
   const handleMatch = useCallback(() => {
     useSessionStore.getState().dispatch({ type: 'dashboard:confirm_sas' })

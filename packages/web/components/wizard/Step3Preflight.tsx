@@ -2,6 +2,7 @@
 
 import { useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { MigrationState } from '@validator-shift/shared'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -15,9 +16,15 @@ export function Step3Preflight({ onBack }: Step3Props) {
   const router = useRouter()
   const preflight = useSessionStore((s) => s.preflight)
   const session = useSessionStore((s) => s.session)
-  const allOk = useSessionStore((s) =>
-    s.preflight.length > 0 && s.preflight.every((c) => c.ok),
-  )
+  const state = useSessionStore((s) => s.state)
+  // Allow Start Migration when EITHER:
+  //   • the orchestrator has already moved to AWAITING_WINDOW (means it
+  //     accepted preflight on its side — even if the dashboard never got
+  //     the per-check broadcast), OR
+  //   • the local preflight slice is non-empty and all checks are ok.
+  const allOk =
+    state === MigrationState.AWAITING_WINDOW ||
+    (preflight.length > 0 && preflight.every((c) => c.ok))
 
   const handleStart = useCallback(() => {
     if (!allOk || !session) return
