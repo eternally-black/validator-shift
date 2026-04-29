@@ -171,7 +171,11 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
 
   // ----- State for migration session -----
   let sessionKey: Uint8Array | null = null
-  let pendingPayload: PendingPayload | null = null
+  // Queue (not slot) — orchestrator may broadcast execute_step to source and
+  // target almost simultaneously for steps 4 and 5, causing both to land in
+  // the agent before either is consumed. A single-slot pendingPayload would
+  // overwrite the first with the second and the matching step would fail.
+  const pendingPayloads: PendingPayload[] = []
   let receivedStakedKeypairPath: string | null = null
   let receivedTowerFilePath: string | null = null
   // CR-1: target needs to know source identity pubkey to verify it stops voting.
@@ -240,7 +244,7 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
         // and let the step handler surface the error when it tries to consume.
       }
     }
-    pendingPayload = { payload: msg.payload, hash: msg.hash }
+    pendingPayloads.push({ payload: msg.payload, hash: msg.hash })
   })
 
   // Rollback signal — Hub continues to drive execute_step messages for the
@@ -261,10 +265,8 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
           printStepProgress(step, label)
           const result = await executeStep(step, opts, client, {
             sessionKey: sessionKey!,
-            getPending: () => pendingPayload,
-            clearPending: () => {
-              pendingPayload = null
-            },
+            takePendingOfKind: (expectedKind: string) =>
+              takePendingOfKind(pendingPayloads, sessionKey!, expectedKind),
             setReceivedStakedKeypairPath: (p: string) => {
               receivedStakedKeypairPath = p
               tmpFilesToWipe.add(p)
@@ -449,8 +451,13 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
 
 interface StepCtx {
   sessionKey: Uint8Array
-  getPending: () => PendingPayload | null
-  clearPending: () => void
+  /**
+   * Atomically take and remove the first queued payload whose decrypted
+   * envelope.kind matches `expectedKind`. Polls for up to 30s. Returns
+   * raw {payload, hash} so the caller can independently verify the SHA
+   * against pending.hash before persisting.
+   */
+  takePendingOfKind: (expectedKind: string) => Promise<PendingPayload>
   setReceivedStakedKeypairPath: (p: string) => void
   getReceivedStakedKeypairPath: () => string | null
   setReceivedTowerFilePath: (p: string) => void
@@ -528,15 +535,12 @@ async function executeStep(
         }
         return await sendTowerFile(client, ctx, towerPath, stakedPubkey)
       } else {
-        const pending = await waitForPending(ctx)
+        const pending = await ctx.takePendingOfKind('tower')
         const decryptedJson = decryptPending(pending, ctx.sessionKey)
         const meta = JSON.parse(decryptedJson) as {
           kind: 'tower'
           filename: string
           contentB64: string
-        }
-        if (meta.kind !== 'tower') {
-          throw new Error(`expected tower payload, got kind=${meta.kind}`)
         }
         const fileBytes = Buffer.from(meta.contentB64, 'base64')
         const dest = pathJoin(opts.ledger, meta.filename)
@@ -562,7 +566,6 @@ async function executeStep(
           )
         }
         ctx.setReceivedTowerFilePath(dest)
-        ctx.clearPending()
         return `tower written to ${dest}`
       }
     }
@@ -587,15 +590,12 @@ async function executeStep(
         })
         return 'identity sent'
       } else {
-        const pending = await waitForPending(ctx)
+        const pending = await ctx.takePendingOfKind('identity')
         const json = decryptPending(pending, ctx.sessionKey)
         const meta = JSON.parse(json) as {
           kind: 'identity'
           pubkey: string
           secretKeyBytes: number[]
-        }
-        if (meta.kind !== 'identity') {
-          throw new Error(`expected identity payload, got kind=${meta.kind}`)
         }
         const secretBuf = Buffer.from(meta.secretKeyBytes)
         const expectedHash = sha256Hex(secretBuf)
@@ -608,7 +608,6 @@ async function executeStep(
         writeKeypair(tmpPath, secretBuf)
         ctx.setReceivedStakedKeypairPath(tmpPath)
         ctx.setSourceIdentityPubkey(meta.pubkey)
-        ctx.clearPending()
         return 'identity stored'
       }
     }
@@ -778,16 +777,41 @@ function decryptPending(pending: PendingPayload, key: Uint8Array): string {
   return new TextDecoder().decode(plaintext)
 }
 
-async function waitForPending(ctx: StepCtx): Promise<PendingPayload> {
-  const initial = ctx.getPending()
-  if (initial) return initial
+/**
+ * Atomically peek-decrypt each queued relay payload, return + remove the
+ * first one whose envelope.kind matches `expectedKind`. Polls 50ms ticks
+ * until 30s deadline. Wrong-kind entries are LEFT in the queue so a
+ * concurrent step waiting for that other kind can pick them up.
+ */
+async function takePendingOfKind(
+  queue: PendingPayload[],
+  sessionKey: Uint8Array,
+  expectedKind: string,
+): Promise<PendingPayload> {
   const deadline = nowMs() + 30_000
   while (nowMs() < deadline) {
+    for (let i = 0; i < queue.length; i++) {
+      const p = queue[i]
+      try {
+        const decoded = decodePayload(p.payload)
+        const plaintext = decrypt(decoded.ciphertext, decoded.nonce, sessionKey)
+        const meta = JSON.parse(new TextDecoder().decode(plaintext)) as {
+          kind?: string
+        }
+        if (meta?.kind === expectedKind) {
+          queue.splice(i, 1)
+          return p
+        }
+      } catch {
+        // Bad / corrupted envelope. Drop it; the matching step will
+        // eventually time out if its payload never arrives.
+        queue.splice(i, 1)
+        i--
+      }
+    }
     await new Promise(r => setTimeout(r, 50))
-    const p = ctx.getPending()
-    if (p) return p
   }
-  throw new Error('timed out waiting for relayed payload from peer')
+  throw new Error(`timed out waiting for ${expectedKind} payload`)
 }
 
 function ensureUnstakedKeypair(opts: AgentOpts, ctx: StepCtx): string {
