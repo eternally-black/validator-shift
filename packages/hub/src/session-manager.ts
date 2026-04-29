@@ -212,7 +212,7 @@ export class SessionManager {
     role: AgentRole,
     msg: AgentMessage,
   ): void {
-    const orchestrator = this.orchestrators.get(sessionId)
+    const orchestrator = this.getOrRevive(sessionId)
     if (!orchestrator) return
 
     switch (msg.type) {
@@ -244,7 +244,7 @@ export class SessionManager {
    * + schema-validated.
    */
   handleDashboardMessage(sessionId: string, msg: DashboardMessage): void {
-    const orchestrator = this.orchestrators.get(sessionId)
+    const orchestrator = this.getOrRevive(sessionId)
     if (!orchestrator) return
 
     switch (msg.type) {
@@ -269,9 +269,34 @@ export class SessionManager {
    * source disconnect triggers ROLLBACK (see state-machine.ts).
    */
   handleAgentDisconnect(sessionId: string, role: AgentRole): void {
-    const orchestrator = this.orchestrators.get(sessionId)
+    const orchestrator = this.getOrRevive(sessionId)
     if (!orchestrator) return
     orchestrator.onAgentDisconnected(role)
+  }
+
+  /**
+   * Look up the orchestrator for a session; if it's missing (most likely
+   * because the hub process was restarted between session creation and
+   * agent connect — Railway redeploys, crashes, etc.), revive it from the
+   * persisted session row. Returns null if the session itself is gone.
+   *
+   * Note: revival starts the orchestrator in IDLE so onAgentConnected can
+   * still drive IDLE->PAIRING when the second agent reconnects. The DB
+   * state column is updated by the wireOrchestrator state_change hook on
+   * the next legitimate transition.
+   */
+  private getOrRevive(sessionId: string): MigrationOrchestrator | null {
+    const existing = this.orchestrators.get(sessionId)
+    if (existing) return existing
+
+    const session = dbGetSessionById(this.db, sessionId)
+    if (!session) return null
+
+    const orchestrator = new MigrationOrchestrator(sessionId)
+    this.orchestrators.set(sessionId, orchestrator)
+    this.wireOrchestrator(sessionId, orchestrator)
+    orchestrator.start()
+    return orchestrator
   }
 
   // ------------------------------------------------------------------
