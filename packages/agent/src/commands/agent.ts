@@ -473,6 +473,13 @@ async function executeStep(
   switch (step) {
     case 1: {
       if (role !== 'source') return 'noop (target waits)'
+      // Escape hatch for single-staked-validator localnet tests, where the
+      // sole voter is leader every slot and `wait-for-restart-window` never
+      // observes the required idle gap. Production migrations MUST NOT set
+      // this flag — the wait window is the only safe handoff opportunity.
+      if (process.env.VS_SKIP_WAIT_WINDOW === '1') {
+        return 'restart window skipped via VS_SKIP_WAIT_WINDOW=1 (UNSAFE outside localnet)'
+      }
       await waitForRestartWindow(opts.ledger, {
         minIdleTime: 2,
         skipNewSnapshotCheck: opts.skipSnapshotCheck === true,
