@@ -311,7 +311,16 @@ export class SessionManager {
         type: 'hub:execute_step',
         step: payload.step,
       }
-      room.sendToAgent(payload.role, agentMsg)
+      // Steps 4 and 5 are bilateral relays: source encrypts and sends, target
+      // decrypts, verifies hash + pubkey, and persists. Both sides need the
+      // execute_step trigger so target's `waitForPending` actually runs and
+      // the staked path/source pubkey land in StepCtx before step 6.
+      if (payload.step === 4 || payload.step === 5) {
+        room.sendToAgent('source', agentMsg)
+        room.sendToAgent('target', agentMsg)
+      } else {
+        room.sendToAgent(payload.role, agentMsg)
+      }
       const dashMsg: HubToDashboardMessage = {
         type: 'dashboard:step_progress',
         step: payload.step,
