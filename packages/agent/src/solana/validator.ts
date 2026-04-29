@@ -39,17 +39,28 @@ export async function waitForRestartWindow(
 /**
  * Wraps `solana-validator -l <ledger> set-identity <keypair>`.
  */
+export interface SetIdentityOptions {
+  /**
+   * Pass `--require-tower` to solana-validator. Required when switching
+   * BETWEEN voting identities (source <-> target staked) so an absent
+   * tower file aborts before the validator votes blindly. Must be FALSE
+   * when switching TO a freshly generated unstaked identity (step 2 on
+   * source) — that identity has no tower file by definition.
+   * Default: true (production-safe).
+   */
+  requireTower?: boolean;
+}
+
 export async function setIdentity(
   ledger: string,
   keypairPath: string,
+  opts: SetIdentityOptions = {},
 ): Promise<void> {
-  await runSolanaValidator([
-    '-l',
-    ledger,
-    'set-identity',
-    '--require-tower',
-    keypairPath,
-  ]);
+  const requireTower = opts.requireTower ?? true;
+  const args: string[] = ['-l', ledger, 'set-identity'];
+  if (requireTower) args.push('--require-tower');
+  args.push(keypairPath);
+  await runSolanaValidator(args);
 }
 
 /**

@@ -496,7 +496,9 @@ async function executeStep(
         if (!ok) throw new Error('operator declined step 2')
       }
       const unstakedPath = ensureUnstakedKeypair(opts, ctx)
-      await setIdentity(opts.ledger, unstakedPath)
+      // requireTower=false: a freshly generated unstaked keypair has no
+      // tower file. --require-tower would always fail here.
+      await setIdentity(opts.ledger, unstakedPath, { requireTower: false })
       return 'set-identity unstaked'
     }
 
