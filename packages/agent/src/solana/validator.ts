@@ -1,3 +1,4 @@
+import { existsSync, statSync } from 'node:fs';
 import { runSolanaCli, runSolanaValidator, SolanaCliError } from './cli.js';
 
 export interface WaitForRestartWindowOptions {
@@ -167,6 +168,81 @@ export async function getValidatorInfo(
 
 // runSolanaValidator (the `solana-validator` binary) is now exported from
 // ./cli.ts — it shares the spawn/timeout/error machinery with runSolanaCli.
+
+/**
+ * Sanity-check a tower file before transferring it. Catches the case
+ * where the source operator points us at a corrupted, truncated, or
+ * stale tower (e.g. left over from a prior validator version) — sending
+ * such a file to target without checks would land it on the new
+ * validator and could cause refusal-to-vote or, worse, a slashable
+ * lockout violation if the contents disagree with the current cluster
+ * state.
+ *
+ * Checks:
+ *  - File exists and is readable.
+ *  - Size is within plausible bounds for a Tower-1.9 binary
+ *    (~100 bytes to ~10 KB; real towers are typically a few hundred
+ *    bytes, but we leave headroom for protocol changes).
+ *  - mtime within the last 7 days. A tower older than that means the
+ *    validator wasn't running recently and the tower may not reflect
+ *    the source's current view of the fork.
+ *
+ * Magic-byte verification (bincode header for SavedTowerVersions::V1_9)
+ * is intentionally NOT performed — the layout has shifted across Solana
+ * 1.x → 2.x boundaries and a magic-byte mismatch on a perfectly valid
+ * tower would block legitimate migrations. Size + mtime + downstream
+ * SHA-256 give us strong evidence without a brittle layout assumption.
+ *
+ * Returns `{ ok: true }` on pass, `{ ok: false, reason }` on any fail.
+ * Never throws — callers use the result as a guard.
+ */
+export interface TowerValidationResult {
+  ok: boolean;
+  reason?: string;
+}
+
+const TOWER_MIN_BYTES = 100;
+const TOWER_MAX_BYTES = 10 * 1024;
+const TOWER_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+export function validateTowerFile(path: string): TowerValidationResult {
+  if (!existsSync(path)) {
+    return { ok: false, reason: `tower file not found at ${path}` };
+  }
+  let stat;
+  try {
+    stat = statSync(path);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `stat failed for ${path}: ${(err as Error).message}`,
+    };
+  }
+  if (!stat.isFile()) {
+    return { ok: false, reason: `${path} is not a regular file` };
+  }
+  if (stat.size < TOWER_MIN_BYTES) {
+    return {
+      ok: false,
+      reason: `tower file too small (${stat.size} < ${TOWER_MIN_BYTES} bytes) — possible truncation`,
+    };
+  }
+  if (stat.size > TOWER_MAX_BYTES) {
+    return {
+      ok: false,
+      reason: `tower file too large (${stat.size} > ${TOWER_MAX_BYTES} bytes) — not a Tower-1.9 file?`,
+    };
+  }
+  const ageMs = Date.now() - stat.mtimeMs;
+  if (ageMs > TOWER_MAX_AGE_MS) {
+    const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    return {
+      ok: false,
+      reason: `tower file is ${days} days old — validator may not be running, tower may not reflect current fork`,
+    };
+  }
+  return { ok: true };
+}
 
 /**
  * Query the locally-running validator's `--identity` pubkey via JSON-RPC.

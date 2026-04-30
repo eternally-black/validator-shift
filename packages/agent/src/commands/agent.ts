@@ -27,6 +27,7 @@ import {
   removeAllAuthorizedVoters,
   getValidatorInfo,
   getRunningValidatorIdentity,
+  validateTowerFile,
 } from '../solana/validator.js'
 import {
   readKeypair,
@@ -637,6 +638,7 @@ async function executeStep(
         const stakedBytes = readKeypair(opts.keypair)
         const stakedPubkey = derivePubkey(stakedBytes)
         const towerPath = pathJoin(opts.ledger, `tower-1_9-${stakedPubkey}.bin`)
+        let resolvedTower = towerPath
         if (!existsSync(towerPath)) {
           let found: string | null = null
           try {
@@ -647,9 +649,17 @@ async function executeStep(
             // ignore
           }
           if (!found) throw new Error(`tower file not found at ${towerPath}`)
-          return await sendTowerFile(client, ctx, found, stakedPubkey)
+          resolvedTower = found
         }
-        return await sendTowerFile(client, ctx, towerPath, stakedPubkey)
+        // Sanity-check the tower BEFORE hashing + sending. Without this,
+        // a corrupted / truncated / stale tower would land on target
+        // bit-perfect (matching SHA on both ends) and could cause refusal-
+        // to-vote or, worst case, lockout violations on activation.
+        const validation = validateTowerFile(resolvedTower)
+        if (!validation.ok) {
+          throw new Error(`tower file failed sanity check: ${validation.reason}`)
+        }
+        return await sendTowerFile(client, ctx, resolvedTower, stakedPubkey)
       } else {
         const pending = await ctx.takePendingOfKind('tower')
         const decryptedJson = decryptPending(pending, ctx.sessionKey)
