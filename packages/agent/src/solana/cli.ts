@@ -27,14 +27,14 @@ export class SolanaCliError extends Error {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
- * Spawn a Solana binary (`solana` or `solana-validator`) with the given args.
+ * Spawn a Solana binary (`solana` or the validator binary) with the given args.
  * Throws SolanaCliError on non-zero exit, timeout, or spawn failure.
  *
  * NO_DNA=1 is always set: signals to the Solana CLI that we are a non-human
  * operator (disables interactive prompts and TUI, prefers structured output).
  */
 function runProcess(
-  bin: 'solana' | 'solana-validator',
+  bin: 'solana' | 'agave-validator' | 'solana-validator',
   args: string[],
   opts: RunOptions = {},
 ): Promise<RunResult> {
@@ -127,9 +127,31 @@ export function runSolanaCli(args: string[], opts: RunOptions = {}): Promise<Run
   return runProcess('solana', args, opts);
 }
 
-/** Run the `solana-validator` binary (for ledger / set-identity / authorized-voter). */
-export function runSolanaValidator(args: string[], opts: RunOptions = {}): Promise<RunResult> {
-  return runProcess('solana-validator', args, opts);
+/**
+ * Run the validator binary (for ledger / set-identity / authorized-voter).
+ *
+ * As of Anza v2.x the binary was renamed `solana-validator` → `agave-validator`,
+ * and v2.3.13 (the version we pin to — last release shipping the production
+ * validator binary in prebuilt tarballs) ships only `agave-validator`. We try
+ * `agave-validator` first and fall back to `solana-validator` on ENOENT so
+ * either older installs (with the old name) or hosts where an operator
+ * symlinked the new binary back to the old name still work.
+ */
+export async function runSolanaValidator(
+  args: string[],
+  opts: RunOptions = {},
+): Promise<RunResult> {
+  try {
+    return await runProcess('agave-validator', args, opts);
+  } catch (err) {
+    if (
+      err instanceof SolanaCliError &&
+      /ENOENT/.test(err.message)
+    ) {
+      return runProcess('solana-validator', args, opts);
+    }
+    throw err;
+  }
 }
 
 // Backwards-compatible aliases (interface names unchanged for callers / tests).
