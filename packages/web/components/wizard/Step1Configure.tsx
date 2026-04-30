@@ -200,15 +200,20 @@ export function Step1Configure({ onNext }: Step1Props) {
             </span>
           </label>
 
-          {fields.clusterType === 'localnet-single' && (
-            <div className="mt-1 rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-              ⚠ <strong>Test environments only.</strong> The skip flags bypass
-              the anti-dual-identity gate. Running against testnet or mainnet
-              with these flags risks dual-signing — slashable on a real
-              cluster. Switch back to <em>Production</em> before generating
-              real-cluster commands.
-            </div>
-          )}
+          <div
+            className={`mt-1 min-h-[4.5rem] rounded border px-3 py-2 text-xs transition-opacity duration-150 ${
+              fields.clusterType === 'localnet-single'
+                ? 'border-red-900/60 bg-red-950/30 text-red-300 opacity-100'
+                : 'border-transparent bg-transparent text-transparent opacity-0'
+            }`}
+            aria-hidden={fields.clusterType !== 'localnet-single'}
+          >
+            ⚠ <strong>Test environments only.</strong> The skip flags bypass
+            the anti-dual-identity gate. Running against testnet or mainnet
+            with these flags risks dual-signing — slashable on a real
+            cluster. Switch back to <em>Production</em> before generating
+            real-cluster commands.
+          </div>
         </fieldset>
 
         {submitError && (

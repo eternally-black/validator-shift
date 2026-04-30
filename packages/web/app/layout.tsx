@@ -29,10 +29,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-screen flex flex-col">
+      <body className="min-h-screen flex flex-col bg-black text-zinc-100">
         <Providers>
           <Header />
-          <main className="container mx-auto max-w-6xl px-6 py-8">{children}</main>
+          <main className="container mx-auto w-full max-w-6xl flex-1 px-6 py-8">
+            {children}
+          </main>
           <Footer />
         </Providers>
       </body>
