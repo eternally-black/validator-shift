@@ -1,14 +1,16 @@
 # ValidatorShift
 
-> Secure end-to-end encrypted Solana validator identity transfer
+Securely migrate a Solana validator's identity between servers without dual-signing risk.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT%20(TBD)-yellow.svg)](#license)
+> Today's options: scp the keypair (no integrity check, no audit trail), bash scripts shared as gists (no operator confirmation gates), Ansible playbooks (assume root SSH and full trust). ValidatorShift is end-to-end encrypted, operator-confirmed at every destructive step, and produces a structured audit log.
+
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](./LICENSE)
 [![CI](https://github.com/Eternally-black/validator-shift/actions/workflows/ci.yml/badge.svg)](https://github.com/Eternally-black/validator-shift/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
 ---
 
-## What it does
+## Why
 
 Migrating a Solana validator's staked identity between servers is currently a manual, error-prone ritual: raw bash scripts, unencrypted `scp` of private keys, and zero protection against dual-signing or partial failures. A single mistake can mean lost stake, slashing-style downtime, or a private key leaked to a transit machine.
 
@@ -52,13 +54,34 @@ Then open the wizard at <https://web-production-797fb.up.railway.app/migrate> an
 
 Full walkthrough (local development, self-hosting the hub): [docs/QUICKSTART.md](./docs/QUICKSTART.md).
 
-## Security
+## Security model & trade-offs
 
-- **End-to-end encryption** — X25519 key exchange + XChaCha20-Poly1305 between agents.
-- **Hub never sees keys** — only encrypted blobs are relayed; even a fully compromised Hub cannot leak the validator keypair.
-- **Anti-dual-identity protocol** — sequential deactivate/activate, gossip verification, and automatic lockout-on-disconnect prevent two servers from ever voting with the same identity.
+### What the Hub sees
+- Session pairing metadata (6-char code, agent IPs, connection timing, current state).
+- Encrypted payload bytes (X25519 + XChaCha20-Poly1305) and SHA-256 hashes — never decrypted.
+- Structured log events from both agents.
 
-Details, threat model, and responsible disclosure: [docs/SECURITY.md](./docs/SECURITY.md).
+### What the Hub does NOT see
+- The validator identity keypair, in plaintext or any reversible form.
+- The X25519 ephemeral private keys (only public keys cross the Hub).
+- The XChaCha20-Poly1305 session key (derived locally by each agent via HKDF).
+- The tower file contents.
+- Any operator credentials.
+
+### Why a Hub at all? Why not pure peer-to-peer?
+Validator operators run nodes behind tight firewalls — typically only Solana gossip and RPC ports are exposed. Forcing them to open a custom port for a one-shot migration is a worse trade-off than a well-designed relay.
+
+The Hub is a coordination plane, not a trust plane:
+- Both ends authenticate each other via SAS comparison, not via the Hub.
+- Encryption keys are derived from X25519 ECDH — Hub compromise reveals only ciphertext.
+- Audit trail is structured events; no raw error strings, no stack traces.
+
+### Residual risks the operator owns
+- Storage-layer wipe on COW filesystems and SSDs is best-effort. For high-value identities, operators should rotate identity keypairs post-migration.
+- A compromised Hub can refuse service (DoS); it cannot exfiltrate keys.
+- Operator-side compromise (malicious shell on either validator host) is out of scope.
+
+See [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md) for the full STRIDE breakdown.
 
 ## Tech stack
 
@@ -106,7 +129,9 @@ validator-shift/
 │
 ├── docs/
 │   ├── QUICKSTART.md
-│   └── SECURITY.md
+│   ├── RECOVERY.md
+│   ├── SECURITY.md
+│   └── THREAT_MODEL.md
 ├── SOLSHIFT_Architecture.md      # Full architecture specification
 ├── package.json                  # npm workspaces root
 └── README.md
@@ -121,8 +146,8 @@ npm install
 # Build all packages
 npm run -ws build
 
-# Run the full test suite (191 tests across packages)
-npm run -ws test
+# Run the full test suite
+npm test -ws
 ```
 
 Per-package dev servers:
@@ -131,6 +156,13 @@ Per-package dev servers:
 npm run dev -w @validator-shift/hub
 npm run dev -w @validator-shift/web
 ```
+
+## How to evaluate
+
+- **Live wizard:** <https://web-production-797fb.up.railway.app/migrate>
+- **Recovery runbook:** [docs/RECOVERY.md](./docs/RECOVERY.md)
+- **Threat model:** [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md)
+- **Tests:** `npm test -ws`
 
 ## Contributing
 
@@ -142,4 +174,4 @@ For security disclosures, do **not** file a public issue — see [docs/SECURITY.
 
 ## License
 
-MIT (TBD — license file pending finalization).
+Apache-2.0 — see [LICENSE](./LICENSE).
