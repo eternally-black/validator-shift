@@ -13,9 +13,11 @@ coverage/
 # Internal-only artifacts (not for public consumption).
 # - localnet bootstrap scripts and per-host setup helpers.
 # - architecture / handoff docs that mix in WIP project state.
+# - SUBMISSION.md is the bounty-platform packet, not a repo artefact.
 scripts/setup-wsl.sh
 scripts/setup-wsl-2.sh
 scripts/setup-laptop.sh
 SOLSHIFT_Architecture.md
 SPEC.md
+SUBMISSION.md
 docs/HANDOFF-WINDOWS-CC.md
