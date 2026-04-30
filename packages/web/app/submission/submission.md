@@ -1,4 +1,4 @@
-# ValidatorShift — Colosseum bounty submission
+# ValidatorShift
 
 > Secure, auditable Solana validator identity migration between servers — without dual-signing risk.
 
@@ -14,15 +14,15 @@
 | **Releases** | <https://github.com/eternally-black/validator-shift/releases> (v0.2.0, signed SHA-256 sums) |
 | **Install (validator host)** | `curl -sSL https://raw.githubusercontent.com/eternally-black/validator-shift/main/scripts/install.sh \| bash` |
 
-Both services are deployed to Railway and auto-redeploy on every push to `main`. The live wizard talks to the live hub end-to-end — no further setup required to evaluate.
+Both services are deployed to Railway and auto-redeploy on every push to `main`. The live wizard talks to the live hub end-to-end — no local setup needed to use the tool.
 
 ---
 
-## Demo video
+## Demo
 
 <https://youtu.be/k3-kZsXmTy4>
 
-The recording demonstrates a full end-to-end migration on a 2-node localnet:
+A full end-to-end migration recorded on a 2-node localnet:
 
 1. Operator opens the wizard, fills 2 fields (ledger + keypair path), continues.
 2. Wizard generates two ready-to-paste `validator-shift agent ...` commands per role.
@@ -31,9 +31,11 @@ The recording demonstrates a full end-to-end migration on a 2-node localnet:
 5. Identity migrates from source to target. Source's keypair is securely wiped at step 9; target is voting under the staked identity.
 6. Hub state badge moves to `COMPLETE`.
 
+Two side-panel terminals running `scripts/watch-migration.sh` poll cluster gossip independently of the migration agents — the colour flip on each side at step 6 is the on-chain proof of physical identity transfer.
+
 ---
 
-## Product
+## Why this exists
 
 ValidatorShift solves the validator identity migration problem that Solana operators currently solve with raw `scp`, ad-hoc bash, and crossed fingers.
 
@@ -55,7 +57,7 @@ ValidatorShift solves the validator identity migration problem that Solana opera
 
 ---
 
-## Target user
+## Who it's for
 
 **Solo and small-team Solana validator operators** who need to:
 
@@ -74,35 +76,33 @@ ValidatorShift solves the validator identity migration problem that Solana opera
 
 ---
 
-## How to evaluate
-
-The judging rubric maps to specific evidence in the repo:
-
-### Execution Quality & Completeness
+## Engineering
 
 - Full 9-step migration state machine: [`packages/hub/src/orchestrator/state-machine.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.ts), with bilateral-step gating, valid-transition enforcement, and disconnect-resilient revival from the SQLite session row.
-- Real rollback handlers for every step ≥ 2: [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) `executeRollbackStep`. Closes the largest functional gap from the original spec.
+- Real rollback handlers for every step ≥ 2: [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) `executeRollbackStep`. Closes the largest functional gap from the original design.
 - Tower file sanity validation before transfer: [`packages/agent/src/solana/validator.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.ts) `validateTowerFile`, with [unit tests](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.test.ts) covering all reject paths.
-- Identity auto-derive + cross-check against running validator's `getIdentity` JSON-RPC.
+- Identity auto-derive + cross-check against the running validator's `getIdentity` JSON-RPC.
 - Test suite: 184 unit tests across all packages (run `npm test -ws`).
 
-#### Edge cases handled (verifiable)
+### Edge cases handled
 
-A judge can reproduce any of these locally; each maps to a specific code path.
+Each scenario is reproducible against the live deployment; each maps to a specific code path.
 
 | # | Scenario | What ValidatorShift does | Code reference |
 |---|---|---|---|
-| 1 | **MITM at the hub** — attacker substitutes their own X25519 ephemeral key per side, presenting different SAS values to source vs target. | Operator visually compares SAS in three independent surfaces (source TTY, target TTY, wizard card). Mismatch → operator answers `n` → agent closes WS with `sas_mismatch` and exits non-zero. No keypair ever crosses the wire. | [`packages/agent/src/crypto/sas.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/crypto/sas.ts), [`packages/agent/src/ui/terminal.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/ui/terminal.ts) (`confirmSAS`) |
-| 2 | **Operator points the agent at the wrong keypair file** (most common operator slip on a multi-keypair host). | Preflight derives the pubkey from the keypair file via Ed25519 and cross-checks it against the running validator's `getIdentity` JSON-RPC. Mismatch surfaces as `keypair matches running validator: keypair=ABC… vs running=XYZ…` and aborts before any destructive step. | [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) (`runPreflight`), [`packages/agent/src/solana/validator.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.ts) (`getRunningValidatorIdentity`) |
+| 1 | **MITM at the hub** — attacker substitutes their own X25519 ephemeral key per side, presenting different SAS values to source vs target. | The operator visually compares SAS in three independent surfaces (source TTY, target TTY, wizard card). Mismatch → operator answers `n` → agent closes WS with `sas_mismatch` and exits non-zero. No keypair ever crosses the wire. | [`packages/agent/src/crypto/sas.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/crypto/sas.ts), [`packages/agent/src/ui/terminal.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/ui/terminal.ts) (`confirmSAS`) |
+| 2 | **Operator points the agent at the wrong keypair file** (most common slip on a multi-keypair host). | Preflight derives the pubkey from the keypair file via Ed25519 and cross-checks it against the running validator's `getIdentity` JSON-RPC. Mismatch surfaces as `keypair matches running validator: keypair=ABC… vs running=XYZ…` and aborts before any destructive step. | [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) (`runPreflight`), [`packages/agent/src/solana/validator.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.ts) (`getRunningValidatorIdentity`) |
 | 3 | **Tower file corrupted, missing, or stale** (truncated to zero bytes by a prior validator crash, partial write, or wrong path). | Step 4 calls `validateTowerFile` first: rejects on missing file, size outside `[100B, 10KB]`, or mtime older than 7 days. Failure short-circuits step 4 with a clear reason and triggers rollback. | [`packages/agent/src/solana/validator.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.ts) (`validateTowerFile`), tests for every reject path in [`validator.test.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/solana/validator.test.ts) |
-| 4 | **Bilateral step race** (steps 4/5 are bilateral relays; without gating, source's step_complete advanced the orchestrator before target had consumed the encrypted payload, causing step 6 to fire prematurely with `staked keypair not received`). | Orchestrator's `onStepComplete` requires BOTH source AND target acks for `BILATERAL_STEPS = {4, 5}` before advancing. A single agent's premature failure on a bilateral step still triggers immediate rollback. | [`packages/hub/src/orchestrator/state-machine.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.ts) (`onStepComplete`), test `bilateral step waits for BOTH agents before advancing` in [`state-machine.test.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.test.ts) |
+| 4 | **Bilateral step race** (steps 4/5 are bilateral relays; without gating, source's step_complete advanced the orchestrator before target had consumed the encrypted payload, causing step 6 to fire prematurely with `staked keypair not received`). | The orchestrator's `onStepComplete` requires BOTH source AND target acks for `BILATERAL_STEPS = {4, 5}` before advancing. A single agent's premature failure on a bilateral step still triggers immediate rollback. | [`packages/hub/src/orchestrator/state-machine.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.ts) (`onStepComplete`), test `bilateral step waits for BOTH agents before advancing` in [`state-machine.test.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.test.ts) |
 | 5 | **Anti-dual-identity gate timeout** (target tries to activate but source is still publishing votes, or a network partition isolates the target's view). | Target's step 6 polls `solana validators` waiting for source's pubkey to disappear from gossip OR be flagged delinquent. 60s timeout → step 6 fails → `hub:rollback` broadcast → both agents run their rollback steps. The gate is bypassable only via `--unsafe-skip-quiet-gate`, which the wizard surfaces explicitly behind a "Test environments only" toggle. | [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) (`waitForSourceQuiet`) |
-| 6 | **Mid-migration agent disconnect.** | Hub orchestrator inspects `currentStep` on disconnect: source disconnect before step 5 → ROLLBACK (we still own the keypair); target disconnect after step 5 → `critical_alert` event raised on the dashboard log channel and migration HALTS in MIGRATING (the keypair may already be on target — only the operator can safely resolve dual-identity risk). Documented runbook for both windows in [`docs/RECOVERY.md`](https://github.com/eternally-black/validator-shift/blob/main/docs/RECOVERY.md). | [`packages/hub/src/orchestrator/state-machine.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.ts) (`onAgentDisconnected`) |
+| 6 | **Mid-migration agent disconnect.** | The hub orchestrator inspects `currentStep` on disconnect: source disconnect before step 5 → ROLLBACK (the keypair has not yet moved); target disconnect after step 5 → `critical_alert` event raised on the dashboard log channel and migration HALTS in MIGRATING (the keypair may already be on target — only the operator can safely resolve the dual-identity risk). Documented runbook for both windows in [`docs/RECOVERY.md`](https://github.com/eternally-black/validator-shift/blob/main/docs/RECOVERY.md). | [`packages/hub/src/orchestrator/state-machine.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/orchestrator/state-machine.ts) (`onAgentDisconnected`) |
 | 7 | **Operator declines a destructive confirmation.** | Each destructive step (set-identity unstaked, activate target, secure-wipe) gates on `confirmDestructive`. `n` → step throws `operator declined step N` → orchestrator transitions to ROLLBACK on step ≥ 2, FAILED on step 1. | [`packages/agent/src/commands/agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) (cases 2/6/9), [`packages/agent/src/ui/terminal.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/ui/terminal.ts) (`confirmDestructive`) |
 | 8 | **Tampered ciphertext on the relay** (hub flips a single bit, swaps payloads, or replays an earlier blob). | XChaCha20-Poly1305 AEAD authentication tag fails on any modification → `CryptoError` thrown by `decrypt` → step throws → rollback. Independently, tower and identity payloads carry SHA-256 hashes alongside the ciphertext; on-target re-hash verifies against the announced hash before any disk write. | [`packages/agent/src/crypto/encrypt.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/crypto/encrypt.ts) (`decrypt`), step 4/5 hash verification in [`agent.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/agent/src/commands/agent.ts) |
 | 9 | **Hub crashes mid-session.** | Sessions persist in SQLite (`hub.db` on a Railway named volume); on hub restart, agents reconnect with the same session code and the orchestrator is revived from the persisted row via `getOrRevive`. Audit log preserved; agents pick up where they left off. | [`packages/hub/src/session-manager.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/session-manager.ts) (`getOrRevive`), [`packages/hub/src/db/queries.ts`](https://github.com/eternally-black/validator-shift/blob/main/packages/hub/src/db/queries.ts) |
 
-### Security
+---
+
+## Security
 
 - Threat model: [`docs/THREAT_MODEL.md`](https://github.com/eternally-black/validator-shift/blob/main/docs/THREAT_MODEL.md) — STRIDE table covering all six categories with concrete mitigations.
 - Crypto stack: X25519 ECDH (`@noble/curves`) → HKDF-SHA256 session key (`@noble/hashes`) → XChaCha20-Poly1305 AEAD (`@noble/ciphers`). Keys never cross the hub; the hub binary doesn't link a decryption primitive.
@@ -113,7 +113,9 @@ A judge can reproduce any of these locally; each maps to a specific code path.
 - Static analysis on every push: [`.github/workflows/security.yml`](https://github.com/eternally-black/validator-shift/blob/main/.github/workflows/security.yml) — `npm audit`, `osv-scanner`, `semgrep` (typescript / owasp-top-ten / nodejsscan rulesets), `actionlint`.
 - Release provenance: [`.github/workflows/release.yml`](https://github.com/eternally-black/validator-shift/blob/main/.github/workflows/release.yml) builds standalone binaries with `bun --compile` from tagged commits only; install.sh verifies SHA-256 against the published `SHA256SUMS` before `chmod +x`.
 
-### Clarity of User Experience
+---
+
+## User experience
 
 - Two-field wizard Step 1 (ledger + keypair). Hub URL, identity pubkey, and other plumbing values are auto-derived or build-time constants.
 - Step 2 generates fully-substituted, copy-paste commands per role — no `<placeholder>` tokens left for the operator to fill.
@@ -122,24 +124,15 @@ A judge can reproduce any of these locally; each maps to a specific code path.
 - Per-step status (running / complete / failed) reflected in the wizard StepList in real time, with a snapshot replay for late-joining dashboards.
 - Recovery runbook: [`docs/RECOVERY.md`](https://github.com/eternally-black/validator-shift/blob/main/docs/RECOVERY.md) — 11-row matrix covering every failure point with copy-pasteable `agave-validator` recovery commands. Top section addresses the dual-identity risk window explicitly.
 
-### Ability to Ship
-
-- Live wizard at <https://web-production-797fb.up.railway.app/migrate>. Open it, click Continue twice, copy-paste two commands. Done.
-- Live hub at <https://hub-production-88a0.up.railway.app>.
-- Single-binary install: `curl -sSL .../install.sh | bash` produces `~/.local/bin/validator-shift` on Linux x64/arm64 and macOS x64/arm64. SHA-256 verified before install.
-- Public source: <https://github.com/eternally-black/validator-shift>.
-- Apache-2.0 licensed.
-- CI green on every push: [build status badges in README](https://github.com/eternally-black/validator-shift#validatorshift).
-
 ---
 
-## Verifying our claims (for the judge)
+## Verifying claims locally
 
 ```bash
 # 1. Hub binary contains no decryption primitive (architectural invariant).
 git clone https://github.com/eternally-black/validator-shift && cd validator-shift
 grep -RIn 'xchacha\|chacha20\|poly1305\|decrypt' packages/hub/src/
-# Should return: nothing in production code paths. Hub never decrypts.
+# Should return: nothing in production code paths. The hub never decrypts.
 
 # 2. Adversarial redaction tests pass.
 npm ci --ignore-scripts && npm test -ws
@@ -163,7 +156,7 @@ npx --workspace packages/hub vitest run src/orchestrator/state-machine.test.ts
 │   SOURCE       │   │       HUB           │   │   TARGET       │
 │   validator    │   │   (relay only)      │   │   validator    │
 │                │   │                     │   │                │
-│  validator-    │←──┤  WSS (encrypted) ├──→  validator-    │
+│  validator-    │←──┤  WSS (encrypted)   ├──→  validator-     │
 │  shift agent   │   │                     │   │  shift agent   │
 │                │   │  - state machine    │   │                │
 │  X25519 priv ←─┼───┤  - audit log SQLite │───┼─→ X25519 priv │
@@ -183,7 +176,7 @@ End-to-end keys are derived locally on each agent. The hub sees only ciphertext 
 | Path | What's there |
 |---|---|
 | [`packages/agent/`](https://github.com/eternally-black/validator-shift/tree/main/packages/agent) | Node CLI. Bin = `validator-shift`. 9-step migration logic + rollback handlers + crypto. |
-| [`packages/hub/`](https://github.com/eternally-black/validator-shift/tree/main/packages/hub) | Fastify + WebSocket server. Pairs agents, relays encrypted payloads, drives state machine, persists audit log. |
+| [`packages/hub/`](https://github.com/eternally-black/validator-shift/tree/main/packages/hub) | Fastify + WebSocket server. Pairs agents, relays encrypted payloads, drives the state machine, persists the audit log. |
 | [`packages/web/`](https://github.com/eternally-black/validator-shift/tree/main/packages/web) | Next.js 15 wizard. |
 | [`packages/shared/`](https://github.com/eternally-black/validator-shift/tree/main/packages/shared) | zod-typed protocol + redaction + constants. Single source of truth across all three. |
 | [`docs/THREAT_MODEL.md`](https://github.com/eternally-black/validator-shift/blob/main/docs/THREAT_MODEL.md) | STRIDE breakdown. |
@@ -195,4 +188,4 @@ End-to-end keys are derived locally on each agent. The hub sees only ciphertext 
 
 ## Contact
 
-Issues + responsible disclosure: <https://github.com/eternally-black/validator-shift/issues>.
+Issues and responsible disclosure: <https://github.com/eternally-black/validator-shift/issues>.
