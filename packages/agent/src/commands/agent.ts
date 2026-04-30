@@ -71,6 +71,23 @@ export interface AgentOpts {
   skipSnapshotCheck?: boolean
   /** Skip operator confirmation prompts for destructive operations. */
   yes?: boolean
+  /**
+   * Source-only escape hatch: skip the wait-for-restart-window step.
+   * NEVER set this on a real cluster — it bypasses the only safe handoff
+   * window check. Required for single-validator localnet tests where the
+   * sole staked voter is leader every slot and the command never returns.
+   * Equivalent to setting env var `VS_SKIP_WAIT_WINDOW=1`.
+   */
+  unsafeSkipWaitWindow?: boolean
+  /**
+   * Target-only escape hatch: skip the anti-dual-identity gate at step 6.
+   * NEVER set this on a real cluster — it removes the check that source
+   * has actually stopped voting before target activates. Required for
+   * single-validator localnet tests where the cluster halts after
+   * source switches identity, freezing the delinquency check forever.
+   * Equivalent to setting env var `VS_SKIP_QUIET_GATE=1`.
+   */
+  unsafeSkipQuietGate?: boolean
 }
 
 interface PendingPayload {
@@ -529,8 +546,11 @@ async function executeStep(
       // sole voter is leader every slot and `wait-for-restart-window` never
       // observes the required idle gap. Production migrations MUST NOT set
       // this flag — the wait window is the only safe handoff opportunity.
-      if (process.env.VS_SKIP_WAIT_WINDOW === '1') {
-        return 'restart window skipped via VS_SKIP_WAIT_WINDOW=1 (UNSAFE outside localnet)'
+      const skip =
+        opts.unsafeSkipWaitWindow === true ||
+        process.env.VS_SKIP_WAIT_WINDOW === '1'
+      if (skip) {
+        return 'restart window skipped via --unsafe-skip-wait-window (UNSAFE outside single-validator localnet)'
       }
       await waitForRestartWindow(opts.ledger, {
         minIdleTime: 2,
@@ -675,11 +695,14 @@ async function executeStep(
       // Production migrations MUST NOT set this flag — bypassing the
       // anti-dual-identity gate is the dual-signing scenario this whole
       // tool is designed to avoid.
-      if (process.env.VS_SKIP_QUIET_GATE === '1') {
+      const skipGate =
+        opts.unsafeSkipQuietGate === true ||
+        process.env.VS_SKIP_QUIET_GATE === '1'
+      if (skipGate) {
         logBoth(
           client,
           'warn',
-          'anti-dual-identity gate skipped via VS_SKIP_QUIET_GATE=1 (UNSAFE outside localnet)',
+          'anti-dual-identity gate skipped via --unsafe-skip-quiet-gate (UNSAFE outside single-validator localnet)',
         )
       } else {
         await waitForSourceQuiet(sourcePk, SOURCE_QUIET_TIMEOUT_MS)

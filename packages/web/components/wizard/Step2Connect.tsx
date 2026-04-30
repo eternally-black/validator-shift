@@ -18,18 +18,36 @@ function buildAgentCommand(args: {
   hubUrl: string
   ledger: string
   keypair?: string
+  clusterType: 'production' | 'localnet-single'
 }): string {
-  const lines = [
-    `validator-shift agent \\`,
-    `  --role ${args.role} \\`,
-    `  --session ${args.sessionCode} \\`,
-    `  --hub ${args.hubUrl} \\`,
-    `  --ledger ${args.ledger}${args.keypair ? ' \\' : ''}`,
+  // Localnet-only escape flags. Source needs --unsafe-skip-wait-window
+  // (step 1 hangs on single-validator clusters); target needs
+  // --unsafe-skip-quiet-gate (step 6's anti-dual-identity gate hangs
+  // for the same reason). Production rendering omits both.
+  const localnetFlag =
+    args.clusterType === 'localnet-single'
+      ? args.role === 'source'
+        ? '--unsafe-skip-wait-window'
+        : '--unsafe-skip-quiet-gate'
+      : null
+
+  // Each "part" is one logical CLI segment without trailing backslash.
+  // We join with ' \\\n  ' to get a continued multi-line shell command
+  // — first line stays unindented, every continuation indents two
+  // spaces, and only the final line lacks a backslash.
+  const parts: string[] = [
+    `validator-shift agent`,
+    `--role ${args.role}`,
+    `--session ${args.sessionCode}`,
+    `--hub ${args.hubUrl}`,
+    `--ledger ${args.ledger}`,
   ]
-  if (args.keypair) {
-    lines.push(`  --keypair ${args.keypair}`)
-  }
-  return lines.join('\n')
+  if (args.keypair) parts.push(`--keypair ${args.keypair}`)
+  if (localnetFlag) parts.push(localnetFlag)
+
+  const [first, ...rest] = parts
+  if (rest.length === 0) return first
+  return [first, ...rest.map((p) => `  ${p}`)].join(' \\\n')
 }
 
 export function Step2Connect({ onNext, onBack }: Step2Props) {
@@ -121,6 +139,7 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
                 hubUrl: HUB_URL,
                 ledger: config?.ledgerPath ?? '/mnt/ledger',
                 keypair: config?.keypairPath ?? '/home/sol/validator-keypair.json',
+                clusterType: config?.clusterType ?? 'production',
               })}
             </CodeBlock>
           </div>
@@ -132,9 +151,18 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
                 sessionCode,
                 hubUrl: HUB_URL,
                 ledger: config?.ledgerPath ?? '/mnt/ledger',
+                clusterType: config?.clusterType ?? 'production',
               })}
             </CodeBlock>
           </div>
+          {config?.clusterType === 'localnet-single' && (
+            <div className="rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+              ⚠ Localnet mode: commands include
+              <code className="mx-1 text-amber-200">--unsafe-skip-*</code>
+              flags. Do NOT run these against testnet or mainnet — go back to
+              Step 1 and switch to <em>Production</em> first.
+            </div>
+          )}
           <p className="text-xs text-neutral-500">
             These commands contain no secrets. The identity keypair never leaves
             the source host in plaintext — agents derive a session key via

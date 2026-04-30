@@ -23,6 +23,20 @@ const isDev =
 const LOG_BUFFER_LIMIT = 1000
 
 /**
+ * Cluster topology the operator is migrating against. Affects which
+ * unsafe-localnet flags Step 2 prepends to the rendered commands.
+ *
+ *   - 'production': mainnet / testnet / devnet / any multi-validator
+ *     cluster. Default. No skip flags rendered.
+ *   - 'localnet-single': single-staked-validator localnet — the cluster
+ *     halts the moment source switches identity, so wait-for-restart-
+ *     window and anti-dual-identity gate both hang forever. Step 2
+ *     prepends --unsafe-skip-wait-window (source) and
+ *     --unsafe-skip-quiet-gate (target). Wizard shows a red warning.
+ */
+export type ClusterType = 'production' | 'localnet-single'
+
+/**
  * Operator-supplied paths from Step 1. Carried into Step 2 so the
  * wizard can render fully-substituted agent invocations (no
  * placeholders for the operator to fill). Never sent over the wire —
@@ -31,6 +45,7 @@ const LOG_BUFFER_LIMIT = 1000
 export interface AgentConfig {
   ledgerPath: string
   keypairPath: string
+  clusterType: ClusterType
 }
 
 export interface SessionStoreState {

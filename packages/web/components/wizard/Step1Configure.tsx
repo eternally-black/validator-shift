@@ -3,12 +3,13 @@
 import { useCallback, useId, useMemo, useState } from 'react'
 import { z } from 'zod'
 import { Button, Card, Input } from '@/components/ui'
-import { useSessionStore } from '@/lib/store'
+import { useSessionStore, type ClusterType } from '@/lib/store'
 import { MigrationState } from '@validator-shift/shared'
 
 const ConfigSchema = z.object({
   ledgerPath: z.string().min(1, 'Ledger path is required'),
   keypairPath: z.string().min(1, 'Keypair path is required'),
+  clusterType: z.enum(['production', 'localnet-single']),
 })
 
 type ConfigFields = z.infer<typeof ConfigSchema>
@@ -30,10 +31,13 @@ const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? ''
 export function Step1Configure({ onNext }: Step1Props) {
   const ledgerId = useId()
   const keypairId = useId()
+  const clusterProductionId = useId()
+  const clusterLocalnetId = useId()
 
   const [fields, setFields] = useState<ConfigFields>({
     ledgerPath: '',
     keypairPath: '',
+    clusterType: 'production',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -52,9 +56,10 @@ export function Step1Configure({ onNext }: Step1Props) {
   }, [validation])
 
   const updateField = useCallback(
-    (key: keyof ConfigFields) => (value: string) => {
-      setFields((prev) => ({ ...prev, [key]: value }))
-    },
+    <K extends keyof ConfigFields>(key: K) =>
+      (value: ConfigFields[K]) => {
+        setFields((prev) => ({ ...prev, [key]: value }))
+      },
     [],
   )
 
@@ -87,6 +92,7 @@ export function Step1Configure({ onNext }: Step1Props) {
         store.setConfig({
           ledgerPath: fields.ledgerPath,
           keypairPath: fields.keypairPath,
+          clusterType: fields.clusterType,
         })
         onNext()
       } catch (err) {
@@ -95,7 +101,7 @@ export function Step1Configure({ onNext }: Step1Props) {
         setSubmitting(false)
       }
     },
-    [fields.ledgerPath, fields.keypairPath, isValid, submitting, onNext],
+    [fields.ledgerPath, fields.keypairPath, fields.clusterType, isValid, submitting, onNext],
   )
 
   return (
@@ -132,6 +138,78 @@ export function Step1Configure({ onNext }: Step1Props) {
             <span className="text-xs text-red-400">{fieldErrors.keypairPath}</span>
           )}
         </div>
+
+        <fieldset className="flex flex-col gap-2.5 rounded border border-neutral-800 px-4 py-3">
+          <legend className="px-2 text-sm font-mono text-neutral-400">Cluster</legend>
+          <p className="-mt-1 text-xs text-neutral-500">
+            Leave this on <em>Production</em> unless you&apos;re testing.
+            The localnet toggle is here purely as a developer affordance —
+            it adds the
+            <code className="mx-1 text-neutral-300">--unsafe-skip-*</code>
+            flags so a single-validator localnet (which would otherwise
+            stall mid-migration) completes end-to-end without manual env-var
+            tweaks. Not intended for any real cluster.
+          </p>
+
+          <label
+            htmlFor={clusterProductionId}
+            className="flex cursor-pointer items-start gap-3"
+          >
+            <input
+              id={clusterProductionId}
+              type="radio"
+              name="clusterType"
+              value="production"
+              checked={fields.clusterType === 'production'}
+              onChange={() => updateField('clusterType')('production' as ClusterType)}
+              className="mt-1"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm text-neutral-200">
+                Production cluster
+              </span>
+              <span className="text-xs text-neutral-500">
+                Mainnet, testnet, devnet, or any multi-validator cluster.
+              </span>
+            </span>
+          </label>
+
+          <label
+            htmlFor={clusterLocalnetId}
+            className="flex cursor-pointer items-start gap-3"
+          >
+            <input
+              id={clusterLocalnetId}
+              type="radio"
+              name="clusterType"
+              value="localnet-single"
+              checked={fields.clusterType === 'localnet-single'}
+              onChange={() => updateField('clusterType')('localnet-single' as ClusterType)}
+              className="mt-1"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm text-neutral-200">
+                Single-validator localnet (test only)
+              </span>
+              <span className="text-xs text-neutral-500">
+                A localnet where one validator holds all stake. Wizard adds
+                <code className="mx-1 text-neutral-300">--unsafe-skip-*</code>
+                flags so the migration completes despite the cluster halting
+                mid-handoff.
+              </span>
+            </span>
+          </label>
+
+          {fields.clusterType === 'localnet-single' && (
+            <div className="mt-1 rounded border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+              ⚠ <strong>Test environments only.</strong> The skip flags bypass
+              the anti-dual-identity gate. Running against testnet or mainnet
+              with these flags risks dual-signing — slashable on a real
+              cluster. Switch back to <em>Production</em> before generating
+              real-cluster commands.
+            </div>
+          )}
+        </fieldset>
 
         {submitError && (
           <p role="alert" className="text-sm text-red-400">

@@ -43,6 +43,16 @@ program
     'allow plain ws:// to a non-localhost hub. Default refuses unless the hub host is localhost / 127.0.0.1.',
     false,
   )
+  .option(
+    '--unsafe-skip-wait-window',
+    'SOURCE only: skip wait-for-restart-window. ONLY for single-validator localnets where the cluster halts the moment source switches identity. Bypasses the only safe handoff window check. NEVER use on testnet / mainnet.',
+    false,
+  )
+  .option(
+    '--unsafe-skip-quiet-gate',
+    'TARGET only: skip the anti-dual-identity gate (waiting for source to stop voting before activating staked identity here). ONLY for single-validator localnets where the cluster halts and source never becomes delinquent. NEVER use on testnet / mainnet.',
+    false,
+  )
   .action(async (raw: Record<string, string | boolean | undefined>) => {
     try {
       if (raw.role !== 'source' && raw.role !== 'target') {
@@ -86,6 +96,8 @@ program
         identityPubkey: raw.identityPubkey as string | undefined,
         skipSnapshotCheck: Boolean(raw.skipSnapshotCheck),
         yes: Boolean(raw.yes),
+        unsafeSkipWaitWindow: Boolean(raw.unsafeSkipWaitWindow),
+        unsafeSkipQuietGate: Boolean(raw.unsafeSkipQuietGate),
       }
 
       await runAgent(opts)
