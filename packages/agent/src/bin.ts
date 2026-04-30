@@ -26,7 +26,7 @@ program
   )
   .option(
     '--identity-pubkey <pk>',
-    'base58 pubkey of the running validator (required on source — DO NOT rely on `solana address` which returns the operator default keypair)',
+    'base58 pubkey of the running validator (optional on source — derived from --keypair if omitted; preflight cross-checks against the running validator\'s JSON-RPC getIdentity response)',
   )
   .option(
     '--skip-snapshot-check',
@@ -51,11 +51,9 @@ program
       if (raw.role === 'source' && !raw.keypair) {
         throw new Error('--keypair is required when --role=source')
       }
-      if (raw.role === 'source' && !raw.identityPubkey) {
-        throw new Error(
-          '--identity-pubkey is required when --role=source (must match the running validator\'s --identity flag)',
-        )
-      }
+      // --identity-pubkey is now optional: agent derives the pubkey from the
+      // keypair file and cross-checks it against the running validator's
+      // JSON-RPC getIdentity response in preflight.
 
       // H-3: refuse plaintext (http:// or ws://) to a non-loopback host.
       // SAS still detects MITM, but we should never normalize plaintext in prod.

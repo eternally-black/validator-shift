@@ -167,3 +167,43 @@ export async function getValidatorInfo(
 
 // runSolanaValidator (the `solana-validator` binary) is now exported from
 // ./cli.ts — it shares the spawn/timeout/error machinery with runSolanaCli.
+
+/**
+ * Query the locally-running validator's `--identity` pubkey via JSON-RPC.
+ *
+ * This is the authoritative answer to "what identity is THIS validator
+ * actually running with right now" — independent of:
+ *   - the operator's CLI keypair (`solana address`),
+ *   - what the on-chain vote account thinks (its `node_pubkey` is set at
+ *     creation and only changes via `vote-update-validator`),
+ *   - any value the operator might pass on the command line.
+ *
+ * Used in preflight to verify that the keypair file the operator pointed
+ * us at actually matches the identity the running validator is signing
+ * with — catches the misconfig where someone migrates with the wrong
+ * keypair file.
+ *
+ * Returns null on any RPC failure / unparseable response. Never throws.
+ */
+export async function getRunningValidatorIdentity(
+  rpcUrl: string = 'http://localhost:8899',
+): Promise<string | null> {
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'getIdentity',
+  });
+  try {
+    const res = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { result?: { identity?: string } };
+    return json?.result?.identity ?? null;
+  } catch {
+    return null;
+  }
+}

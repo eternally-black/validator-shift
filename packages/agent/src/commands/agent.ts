@@ -25,6 +25,7 @@ import {
   addAuthorizedVoter,
   removeAllAuthorizedVoters,
   getValidatorInfo,
+  getRunningValidatorIdentity,
 } from '../solana/validator.js'
 import {
   readKeypair,
@@ -169,6 +170,26 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
     printLog('warn', 'hub heartbeat timeout')
   })
 
+  // ----- Resolve source identity pubkey -----
+  // Source: prefer explicit --identity-pubkey, fall back to deriving from the
+  // keypair file the operator pointed at. Preflight will then cross-check this
+  // against the running validator's JSON-RPC getIdentity response — that's the
+  // authoritative source of truth and catches the misconfig where someone
+  // points us at the wrong keypair file.
+  // Target: starts null, learns the source pubkey from the step 5 payload.
+  let resolvedSourceIdentityPubkey: string | null = null
+  if (opts.role === 'source') {
+    resolvedSourceIdentityPubkey = opts.identityPubkey ?? null
+    if (!resolvedSourceIdentityPubkey && opts.keypair) {
+      try {
+        const bytes = readKeypair(opts.keypair)
+        resolvedSourceIdentityPubkey = derivePubkey(bytes)
+      } catch {
+        // Surfaces as a preflight failure rather than a hard crash here.
+      }
+    }
+  }
+
   // ----- State for migration session -----
   let sessionKey: Uint8Array | null = null
   // Queue (not slot) — orchestrator may broadcast execute_step to source and
@@ -178,10 +199,7 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
   const pendingPayloads: PendingPayload[] = []
   let receivedStakedKeypairPath: string | null = null
   let receivedTowerFilePath: string | null = null
-  // CR-1: target needs to know source identity pubkey to verify it stops voting.
-  // Source already knows it from --identity-pubkey; target learns it from step 5 payload.
-  let sourceIdentityPubkey: string | null =
-    opts.role === 'source' ? (opts.identityPubkey ?? null) : null
+  let sourceIdentityPubkey: string | null = resolvedSourceIdentityPubkey
   // CR-2: source must wait for target to confirm voting before wiping the keypair.
   let peerVotingConfirmed = false
 
@@ -217,7 +235,7 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
     client.once('hub:run_preflight', () => resolve())
   })
 
-  const checks = await runPreflight(opts)
+  const checks = await runPreflight(opts, resolvedSourceIdentityPubkey)
   printPreflightTable(checks)
   client.send({ type: 'agent:preflight_result', checks })
 
@@ -352,7 +370,10 @@ function waitForPeer(client: HubClient): Promise<Uint8Array> {
   })
 }
 
-async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
+async function runPreflight(
+  opts: AgentOpts,
+  resolvedSourcePubkey: string | null,
+): Promise<PreflightCheck[]> {
   const checks: PreflightCheck[] = []
 
   try {
@@ -370,9 +391,10 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
     })
   }
 
-  // validator process running — use explicit identityPubkey when provided.
+  // validator process running — use the resolved pubkey (either operator-
+  // supplied --identity-pubkey or derived from --keypair).
   try {
-    const info = await getValidatorInfo(opts.identityPubkey)
+    const info = await getValidatorInfo(resolvedSourcePubkey ?? undefined)
     const ok = !!info.identityPubkey
     checks.push({
       name: 'validator process running',
@@ -413,21 +435,44 @@ async function runPreflight(opts: AgentOpts): Promise<PreflightCheck[]> {
       })
     }
 
-    // Vote-account match — verifies the keypair we have IS the validator's identity
-    // by deriving the pubkey and comparing to --identity-pubkey.
-    if (opts.keypair && opts.identityPubkey) {
+    // Cross-check: derived pubkey from keypair file vs running validator's
+    // actual --identity (queried via JSON-RPC getIdentity). This catches
+    // operator misconfig — pointing us at the wrong keypair file — without
+    // requiring them to memorize their own pubkey.
+    if (opts.keypair) {
       try {
         const bytes = readKeypair(opts.keypair)
         const derived = derivePubkey(bytes)
-        const ok = derived === opts.identityPubkey
-        checks.push({
-          name: 'keypair matches --identity-pubkey',
-          ok,
-          detail: ok ? undefined : `keypair=${derived.slice(0, 8)}… vs flag=${opts.identityPubkey.slice(0, 8)}…`,
-        })
+        const running = await getRunningValidatorIdentity()
+        if (running === null) {
+          checks.push({
+            name: 'keypair matches running validator',
+            ok: false,
+            detail:
+              'running validator JSON-RPC unreachable on http://localhost:8899 — cannot cross-check',
+          })
+        } else {
+          const ok = derived === running
+          checks.push({
+            name: 'keypair matches running validator',
+            ok,
+            detail: ok
+              ? `identity=${derived.slice(0, 8)}…`
+              : `keypair=${derived.slice(0, 8)}… vs running=${running.slice(0, 8)}…`,
+          })
+        }
+        // If operator ALSO passed --identity-pubkey, sanity-check it against
+        // the derived value so a stale flag value doesn't slip through.
+        if (opts.identityPubkey && opts.identityPubkey !== derived) {
+          checks.push({
+            name: '--identity-pubkey matches keypair',
+            ok: false,
+            detail: `flag=${opts.identityPubkey.slice(0, 8)}… vs keypair=${derived.slice(0, 8)}…`,
+          })
+        }
       } catch (err) {
         checks.push({
-          name: 'keypair matches --identity-pubkey',
+          name: 'keypair matches running validator',
           ok: false,
           detail: errorMessage(err),
         })
