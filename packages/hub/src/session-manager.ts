@@ -276,6 +276,14 @@ export class SessionManager {
   }
 
   /**
+   * Read-only access for the WS dashboard snapshot path. Returns 0 if
+   * the orchestrator is missing or not currently MIGRATING.
+   */
+  getCurrentStep(sessionId: string): number {
+    return this.getOrRevive(sessionId)?.currentStep ?? 0
+  }
+
+  /**
    * Look up the orchestrator for a session; if it's missing (most likely
    * because the hub process was restarted between session creation and
    * agent connect — Railway redeploys, crashes, etc.), revive it from the
@@ -353,6 +361,28 @@ export class SessionManager {
         type: 'dashboard:step_progress',
         step: payload.step,
         status: 'running',
+      }
+      room.broadcastToDashboards(dashMsg)
+    })
+
+    orchestrator.on('step_completed', (payload) => {
+      const room = this.registry.get(sessionId)
+      if (!room) return
+      const dashMsg: HubToDashboardMessage = {
+        type: 'dashboard:step_progress',
+        step: payload.step,
+        status: 'complete',
+      }
+      room.broadcastToDashboards(dashMsg)
+    })
+
+    orchestrator.on('step_failed_event', (payload) => {
+      const room = this.registry.get(sessionId)
+      if (!room) return
+      const dashMsg: HubToDashboardMessage = {
+        type: 'dashboard:step_progress',
+        step: payload.step,
+        status: 'failed',
       }
       room.broadcastToDashboards(dashMsg)
     })

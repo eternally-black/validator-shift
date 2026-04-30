@@ -22,6 +22,8 @@ import {
   type HubToAgentMessage,
   type HubToDashboardMessage,
 } from '@validator-shift/shared/protocol'
+import { MIGRATION_STEPS } from '@validator-shift/shared/constants'
+import { MigrationState } from '@validator-shift/shared'
 import { redactSecrets, isValidSessionCode } from '@validator-shift/shared/redact'
 import {
   appendAuditLog as dbAppendAuditLog,
@@ -44,6 +46,13 @@ export interface HandlerDeps {
     ): void
     handleDashboardMessage(sessionId: string, msg: DashboardMessage): void
     handleAgentDisconnect(sessionId: string, role: AgentRole): void
+    /**
+     * Returns the current step the orchestrator is dispatching, or 0 if
+     * the session is not currently MIGRATING. Used by the dashboard
+     * snapshot path to reconstruct per-step progress for late-joining
+     * dashboards.
+     */
+    getCurrentStep(sessionId: string): number
   }
   /**
    * Verifies a dashboard bearer token issued at session creation. Required
@@ -377,6 +386,41 @@ export function handleDashboardSocket(
     },
   }
   safeSend(ws, agentsMsg)
+
+  // Per-step snapshot. Without this, a dashboard connecting AFTER the
+  // migration finished sees the COMPLETE state badge but every step in
+  // the StepList stays "pending" because `dashboard:step_progress`
+  // messages only get fan-out at the moment they fire (not replayed).
+  // For a session in COMPLETE state we mark all steps complete; for
+  // MIGRATING we mark the current step as running (and any prior ones
+  // as complete — the orchestrator's currentStep tells us how far we
+  // got, which is the only state we can reliably reconstruct without a
+  // dedicated step-state column in the DB).
+  if (session.state === MigrationState.COMPLETE) {
+    for (const step of MIGRATION_STEPS) {
+      const msg: HubToDashboardMessage = {
+        type: 'dashboard:step_progress',
+        step: step.number,
+        status: 'complete',
+      }
+      safeSend(ws, msg)
+    }
+  } else if (session.state === MigrationState.MIGRATING) {
+    const currentStep = deps.orchestrator.getCurrentStep(session.id)
+    for (const step of MIGRATION_STEPS) {
+      let status: 'pending' | 'running' | 'complete' | 'failed'
+      if (step.number < currentStep) status = 'complete'
+      else if (step.number === currentStep) status = 'running'
+      else status = 'pending'
+      if (status === 'pending') continue
+      const msg: HubToDashboardMessage = {
+        type: 'dashboard:step_progress',
+        step: step.number,
+        status,
+      }
+      safeSend(ws, msg)
+    }
+  }
 
   for (const entry of getRecentAuditLogs(deps.db, session.id, 200)) {
     if (entry.agent === 'hub') continue // dashboard:log only carries agent roles

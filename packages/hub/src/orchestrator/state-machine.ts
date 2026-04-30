@@ -90,6 +90,19 @@ interface PreflightResults {
 export type OrchestratorEvents = {
   state_change: { from: MigrationState; to: MigrationState }
   execute_step: { role: AgentRole; step: number }
+  /**
+   * A step has fully finished (both bilateral acks if applicable).
+   * Distinct from `execute_step` (which fires when a step is dispatched
+   * to agents). Consumers use this to broadcast `dashboard:step_progress`
+   * with status `complete` so the wizard's per-step UI updates correctly.
+   */
+  step_completed: { step: number }
+  /**
+   * A step has reported failure on at least one side. Fires before
+   * rollback / session_failed transitions so the dashboard can mark
+   * the step as failed in the UI.
+   */
+  step_failed_event: { step: number; role: AgentRole }
   rollback: { rollbackStep: RollbackStep }
   session_complete: MigrationSummary
   session_failed: { reason: string }
@@ -363,6 +376,12 @@ export class MigrationOrchestrator extends EventEmitter {
     }
 
     this._stepsCompleted += 1
+    // Notify subscribers that THIS step is done. Hub uses this to
+    // broadcast dashboard:step_progress with status='complete'. Must
+    // fire BEFORE the next execute_step so the dashboard sees
+    // running→complete→running rather than running→running.
+    this.emit('step_completed', { step })
+
     const next = nextStep(step)
     if (!next) {
       // All TOTAL_STEPS done.
@@ -385,6 +404,10 @@ export class MigrationOrchestrator extends EventEmitter {
   onStepFailed(step: number, role: AgentRole, error: string): void {
     if (this._state !== MigrationState.MIGRATING) return
     if (step !== this._currentStep) return
+
+    // Notify subscribers BEFORE state transition so dashboards can mark
+    // the step as failed in the per-step list.
+    this.emit('step_failed_event', { step, role })
 
     if (shouldRollback(step)) {
       this.beginRollback(`step ${step} failed on ${role}: ${error}`)

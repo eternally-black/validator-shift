@@ -54,6 +54,7 @@ export async function main(): Promise<void> {
       handleAgentMessage: sessionManager.handleAgentMessage.bind(sessionManager),
       handleDashboardMessage: sessionManager.handleDashboardMessage.bind(sessionManager),
       handleAgentDisconnect: sessionManager.handleAgentDisconnect.bind(sessionManager),
+      getCurrentStep: sessionManager.getCurrentStep.bind(sessionManager),
     },
     verifyDashboardToken: sessionManager.verifyDashboardToken.bind(sessionManager),
   }
