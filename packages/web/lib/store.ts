@@ -22,6 +22,17 @@ const isDev =
 
 const LOG_BUFFER_LIMIT = 1000
 
+/**
+ * Operator-supplied paths from Step 1. Carried into Step 2 so the
+ * wizard can render fully-substituted agent invocations (no
+ * placeholders for the operator to fill). Never sent over the wire —
+ * lives in browser memory only and is wiped on `reset()`.
+ */
+export interface AgentConfig {
+  ledgerPath: string
+  keypairPath: string
+}
+
 export interface SessionStoreState {
   session: Session | null
   state: MigrationState
@@ -40,6 +51,7 @@ export interface SessionStoreState {
    * sessionStorage).
    */
   dashboardToken: string | null
+  config: AgentConfig | null
 
   // Internal — kept in state so subscribers don't accidentally serialize it,
   // but exposed via attach/detach actions only.
@@ -48,6 +60,7 @@ export interface SessionStoreState {
   // ---- actions ----
   setSession: (session: Session | null) => void
   setDashboardToken: (token: string | null) => void
+  setConfig: (config: AgentConfig | null) => void
   setState: (state: MigrationState) => void
   setAgents: (agents: Partial<{ source: AgentStatus; target: AgentStatus }>) => void
   setPreflight: (checks: PreflightCheck[]) => void
@@ -73,6 +86,7 @@ const initialState = (): Omit<
   SessionStoreState,
   | 'setSession'
   | 'setDashboardToken'
+  | 'setConfig'
   | 'setState'
   | 'setAgents'
   | 'setPreflight'
@@ -98,6 +112,7 @@ const initialState = (): Omit<
   connection: 'closed',
   summary: null,
   dashboardToken: null,
+  config: null,
   _client: null,
 })
 
@@ -108,6 +123,8 @@ export const useSessionStore: UseBoundStore<StoreApi<SessionStoreState>> =
     setSession: (session) => set({ session }),
 
     setDashboardToken: (token) => set({ dashboardToken: token }),
+
+    setConfig: (config) => set({ config }),
 
     setState: (state) => set({ state }),
 

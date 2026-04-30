@@ -5,13 +5,36 @@ import { MigrationState } from '@validator-shift/shared'
 import { Button, Card, CodeBlock, StatusDot } from '@/components/ui'
 import { useSessionStore } from '@/lib/store'
 
+const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? 'http://localhost:3001'
+
 interface Step2Props {
   onNext: () => void
   onBack: () => void
 }
 
+function buildAgentCommand(args: {
+  role: 'source' | 'target'
+  sessionCode: string
+  hubUrl: string
+  ledger: string
+  keypair?: string
+}): string {
+  const lines = [
+    `validator-shift agent \\`,
+    `  --role ${args.role} \\`,
+    `  --session ${args.sessionCode} \\`,
+    `  --hub ${args.hubUrl} \\`,
+    `  --ledger ${args.ledger}${args.keypair ? ' \\' : ''}`,
+  ]
+  if (args.keypair) {
+    lines.push(`  --keypair ${args.keypair}`)
+  }
+  return lines.join('\n')
+}
+
 export function Step2Connect({ onNext, onBack }: Step2Props) {
   const sessionCode = useSessionStore((s) => s.session?.code ?? null)
+  const config = useSessionStore((s) => s.config)
   const sourceConnected = useSessionStore((s) => s.agents.source.connected)
   const targetConnected = useSessionStore((s) => s.agents.target.connected)
   const state = useSessionStore((s) => s.state)
@@ -71,16 +94,52 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
       <Card>
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-mono uppercase tracking-wider text-neutral-400">
+            Install (first time on each host)
+          </h2>
+          <CodeBlock>
+            {`curl -sSL https://raw.githubusercontent.com/eternally-black/validator-shift/main/scripts/install.sh | bash`}
+          </CodeBlock>
+          <p className="text-xs text-neutral-500">
+            Verifies SHA-256 against the tagged GitHub Release before installing
+            <code className="mx-1 text-neutral-300">validator-shift</code> to{' '}
+            <code className="text-neutral-300">~/.local/bin/</code>.
+          </p>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="flex flex-col gap-4">
+          <h2 className="text-sm font-mono uppercase tracking-wider text-neutral-400">
             Launch Agents
           </h2>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-neutral-500">Source server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role source --session ${sessionCode} \\\n  --hub wss://your-hub:3002 \\\n  --ledger /mnt/ledger \\\n  --keypair /etc/solana/validator-keypair.json \\\n  --identity-pubkey <staked-validator-pubkey>`}</CodeBlock>
+            <span className="text-xs text-neutral-500">On the SOURCE host (current staked validator):</span>
+            <CodeBlock>
+              {buildAgentCommand({
+                role: 'source',
+                sessionCode,
+                hubUrl: HUB_URL,
+                ledger: config?.ledgerPath ?? '/mnt/ledger',
+                keypair: config?.keypairPath ?? '/home/sol/validator-keypair.json',
+              })}
+            </CodeBlock>
           </div>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-neutral-500">Target server:</span>
-            <CodeBlock>{`npx @validator-shift/agent --role target --session ${sessionCode} \\\n  --hub wss://your-hub:3002 \\\n  --ledger /mnt/ledger`}</CodeBlock>
+            <span className="text-xs text-neutral-500">On the TARGET host (will receive identity):</span>
+            <CodeBlock>
+              {buildAgentCommand({
+                role: 'target',
+                sessionCode,
+                hubUrl: HUB_URL,
+                ledger: config?.ledgerPath ?? '/mnt/ledger',
+              })}
+            </CodeBlock>
           </div>
+          <p className="text-xs text-neutral-500">
+            These commands contain no secrets. The identity keypair never leaves
+            the source host in plaintext — agents derive a session key via
+            X25519 ECDH and encrypt the keypair end-to-end before relay.
+          </p>
         </div>
       </Card>
 

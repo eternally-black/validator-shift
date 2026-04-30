@@ -9,12 +9,6 @@ import { MigrationState } from '@validator-shift/shared'
 const ConfigSchema = z.object({
   ledgerPath: z.string().min(1, 'Ledger path is required'),
   keypairPath: z.string().min(1, 'Keypair path is required'),
-  hubUrl: z
-    .string()
-    .regex(
-      /^(https?|wss?):\/\/.+/,
-      'Hub URL must start with http(s):// or ws(s)://',
-    ),
 })
 
 type ConfigFields = z.infer<typeof ConfigSchema>
@@ -36,12 +30,10 @@ const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? ''
 export function Step1Configure({ onNext }: Step1Props) {
   const ledgerId = useId()
   const keypairId = useId()
-  const hubId = useId()
 
   const [fields, setFields] = useState<ConfigFields>({
     ledgerPath: '',
     keypairPath: '',
-    hubUrl: 'http://localhost:3001',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -92,6 +84,10 @@ export function Step1Configure({ onNext }: Step1Props) {
           createdAt: Date.now(),
         })
         store.setDashboardToken(data.dashboardToken)
+        store.setConfig({
+          ledgerPath: fields.ledgerPath,
+          keypairPath: fields.keypairPath,
+        })
         onNext()
       } catch (err) {
         setSubmitError(err instanceof Error ? err.message : 'Unknown error')
@@ -99,7 +95,7 @@ export function Step1Configure({ onNext }: Step1Props) {
         setSubmitting(false)
       }
     },
-    [isValid, submitting, onNext],
+    [fields.ledgerPath, fields.keypairPath, isValid, submitting, onNext],
   )
 
   return (
@@ -134,22 +130,6 @@ export function Step1Configure({ onNext }: Step1Props) {
           />
           {fieldErrors.keypairPath && (
             <span className="text-xs text-red-400">{fieldErrors.keypairPath}</span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={hubId} className="text-sm font-mono text-neutral-400">
-            Hub URL
-          </label>
-          <Input
-            id={hubId}
-            value={fields.hubUrl}
-            onChange={(e) => updateField('hubUrl')(e.target.value)}
-            placeholder="https://hub.example.com"
-            aria-invalid={Boolean(fieldErrors.hubUrl)}
-          />
-          {fieldErrors.hubUrl && (
-            <span className="text-xs text-red-400">{fieldErrors.hubUrl}</span>
           )}
         </div>
 
