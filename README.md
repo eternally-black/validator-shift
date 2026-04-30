@@ -38,7 +38,7 @@ ValidatorShift replaces that ritual with a hardened, observable, end-to-end encr
 └───────────────────┘   Key Transfer └───────────────────┘
 ```
 
-For the full specification — threat model, state machine, message protocol, deployment topology — see the [Architecture document](./SOLSHIFT_Architecture.md).
+For the threat model see [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md). For failure-mode operator runbook see [`docs/RECOVERY.md`](./docs/RECOVERY.md).
 
 ## Quick start
 
@@ -132,7 +132,6 @@ validator-shift/
 │   ├── RECOVERY.md
 │   ├── SECURITY.md
 │   └── THREAT_MODEL.md
-├── SOLSHIFT_Architecture.md      # Full architecture specification
 ├── package.json                  # npm workspaces root
 └── README.md
 ```
@@ -166,7 +165,7 @@ npm run dev -w @validator-shift/web
 
 ## Contributing
 
-PRs are welcome. Start with [`docs/QUICKSTART.md`](./docs/QUICKSTART.md) to get a local environment running, then read [`SOLSHIFT_Architecture.md`](./SOLSHIFT_Architecture.md) for the design rationale before sending a patch.
+PRs are welcome. Start with [`docs/QUICKSTART.md`](./docs/QUICKSTART.md) for a local environment, then read [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) for the security model before sending a patch.
 
 Issues and feature requests: <https://github.com/Eternally-black/validator-shift/issues>.
 

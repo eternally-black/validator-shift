@@ -9,3 +9,13 @@ coverage/
 *.log
 .claude/
 *.tsbuildinfo
+
+# Internal-only artifacts (not for public consumption).
+# - localnet bootstrap scripts and per-host setup helpers.
+# - architecture / handoff docs that mix in WIP project state.
+scripts/setup-wsl.sh
+scripts/setup-wsl-2.sh
+scripts/setup-laptop.sh
+SOLSHIFT_Architecture.md
+SPEC.md
+docs/HANDOFF-WINDOWS-CC.md
