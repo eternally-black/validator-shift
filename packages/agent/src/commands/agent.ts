@@ -8,6 +8,7 @@ import {
   openSync,
   fsyncSync,
   closeSync,
+  unlinkSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -61,6 +62,15 @@ export interface AgentOpts {
   ledger: string
   keypair?: string
   unstakedKeypair?: string
+  /**
+   * Source-only: path to the authorized-voter keypair (typically the
+   * vote-account keypair). Used during rollback to re-add the
+   * authorized voter after restoring source's staked identity. If
+   * absent, rollback skips the voter-restore step and logs a warning
+   * — the operator must run `agave-validator authorized-voter add`
+   * manually.
+   */
+  voteAccountKeypair?: string
   /**
    * Base58 pubkey of the running validator's --identity. Required on source.
    * Avoids relying on `solana address` which returns the operator's default
@@ -282,11 +292,45 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
     pendingPayloads.push({ payload: msg.payload, hash: msg.hash })
   })
 
-  // Rollback signal — Hub continues to drive execute_step messages for the
-  // recovery flow; this is just for logging.
+  // Rollback signal — Hub follows up with one or more
+  // hub:execute_rollback_step messages targeted at this role. The
+  // top-level rollback signal is informational; per-step actions land
+  // in the dedicated handler below.
   client.on('hub:rollback', () => {
     logBoth(client, 'warn', 'hub requested rollback')
   })
+
+  client.on(
+    'hub:execute_rollback_step',
+    (msg: {
+      name:
+        | 'restore_source_identity'
+        | 'readd_authorized_voter_source'
+        | 'remove_transferred_files_target'
+        | 'verify_source_voting'
+      description: string
+    }) => {
+      void (async () => {
+        const result = await executeRollbackStep(msg.name, opts, client, {
+          getReceivedStakedKeypairPath: () => receivedStakedKeypairPath,
+          getReceivedTowerFilePath: () => receivedTowerFilePath,
+          tmpFilesToWipe,
+        })
+        client.send({
+          type: 'agent:rollback_step_complete',
+          name: msg.name,
+          ok: result.ok,
+          detail: result.detail,
+        })
+        const level = result.ok ? 'info' : 'warn'
+        logBoth(
+          client,
+          level,
+          `rollback ${msg.name}: ${result.ok ? 'ok' : 'failed'}${result.detail ? ` (${result.detail})` : ''}`,
+        )
+      })()
+    },
+  )
 
   // Indefinite loop processing execute_step events.
   await new Promise<void>(resolve => {
@@ -911,6 +955,184 @@ function ensureUnstakedKeypair(opts: AgentOpts, ctx: StepCtx): string {
   writeKeypair(tmpPath, Buffer.from(kp.secretKey))
   ctx.registerTmpFile(tmpPath)
   return tmpPath
+}
+
+// ---------------------------------------------------------------------------
+// Rollback step execution (hub:execute_rollback_step)
+// ---------------------------------------------------------------------------
+
+interface RollbackCtx {
+  getReceivedStakedKeypairPath: () => string | null
+  getReceivedTowerFilePath: () => string | null
+  tmpFilesToWipe: Set<string>
+}
+
+interface RollbackResult {
+  ok: boolean
+  detail?: string
+}
+
+/**
+ * Per-step rollback handler. Each step targets exactly one role; if
+ * we're the wrong role for a given step we no-op with ok=true (the
+ * orchestrator routes correctly, but defensive routing is cheap).
+ *
+ * Best-effort by design: a rollback is already a failure mode, and
+ * partial recovery is better than throwing. Each branch returns a
+ * structured result that the hub captures in the audit log so the
+ * operator can pick up where automation left off.
+ */
+async function executeRollbackStep(
+  name:
+    | 'restore_source_identity'
+    | 'readd_authorized_voter_source'
+    | 'remove_transferred_files_target'
+    | 'verify_source_voting',
+  opts: AgentOpts,
+  client: HubClient,
+  ctx: RollbackCtx,
+): Promise<RollbackResult> {
+  void client // currently unused; threaded so future paths can broadcast progress
+  switch (name) {
+    case 'restore_source_identity': {
+      if (opts.role !== 'source') return { ok: true, detail: 'not source — noop' }
+      if (!opts.keypair) {
+        return {
+          ok: false,
+          detail: '--keypair was not provided; cannot restore source identity',
+        }
+      }
+      if (!existsSync(opts.keypair)) {
+        return {
+          ok: false,
+          detail: `staked keypair file gone (${opts.keypair}) — step 9 may have already wiped it; manual recovery required`,
+        }
+      }
+      try {
+        // requireTower=true: source's own tower file should still be in
+        // the ledger from before migration started.
+        await setIdentity(opts.ledger, opts.keypair, { requireTower: true })
+        return { ok: true, detail: 'set-identity restored to staked keypair' }
+      } catch (err) {
+        // Retry without --require-tower as a last resort. The tower
+        // file may have been displaced by a step 4 partial transfer.
+        try {
+          await setIdentity(opts.ledger, opts.keypair, { requireTower: false })
+          return {
+            ok: true,
+            detail:
+              'set-identity restored without --require-tower (tower may be stale; verify lockout safety)',
+          }
+        } catch (err2) {
+          return {
+            ok: false,
+            detail: `set-identity failed: ${errorMessage(err)} (retry without tower also failed: ${errorMessage(err2)})`,
+          }
+        }
+      }
+    }
+
+    case 'readd_authorized_voter_source': {
+      if (opts.role !== 'source') return { ok: true, detail: 'not source — noop' }
+      if (!opts.voteAccountKeypair) {
+        return {
+          ok: false,
+          detail:
+            '--vote-account-keypair was not provided; operator must run `agave-validator authorized-voter add` manually',
+        }
+      }
+      if (!existsSync(opts.voteAccountKeypair)) {
+        return {
+          ok: false,
+          detail: `vote-account keypair file missing at ${opts.voteAccountKeypair}`,
+        }
+      }
+      try {
+        await addAuthorizedVoter(opts.ledger, opts.voteAccountKeypair)
+        return { ok: true, detail: 'authorized-voter re-added' }
+      } catch (err) {
+        return {
+          ok: false,
+          detail: `authorized-voter add failed: ${errorMessage(err)}`,
+        }
+      }
+    }
+
+    case 'remove_transferred_files_target': {
+      if (opts.role !== 'target') return { ok: true, detail: 'not target — noop' }
+      const wipedPaths: string[] = []
+      const failures: string[] = []
+
+      // Wipe the received staked keypair if step 5 already wrote it
+      // to /tmp. The tmpFilesToWipe set is the source of truth for
+      // anything we created during this session.
+      const stakedPath = ctx.getReceivedStakedKeypairPath()
+      if (stakedPath && existsSync(stakedPath)) {
+        try {
+          await secureWipe(stakedPath)
+          ctx.tmpFilesToWipe.delete(stakedPath)
+          wipedPaths.push(stakedPath)
+        } catch (err) {
+          failures.push(`${stakedPath}: ${errorMessage(err)}`)
+        }
+      }
+
+      // Remove the transferred tower file from target's ledger if
+      // step 4 wrote it. unlink (not secureWipe) — tower files are
+      // public state, not secret material.
+      const towerPath = ctx.getReceivedTowerFilePath()
+      if (towerPath && existsSync(towerPath)) {
+        try {
+          unlinkSync(towerPath)
+          wipedPaths.push(towerPath)
+        } catch (err) {
+          failures.push(`${towerPath}: ${errorMessage(err)}`)
+        }
+      }
+
+      if (failures.length > 0) {
+        return {
+          ok: false,
+          detail: `partial cleanup; failures: ${failures.join('; ')}; wiped: ${wipedPaths.join(', ') || 'none'}`,
+        }
+      }
+      return {
+        ok: true,
+        detail:
+          wipedPaths.length === 0
+            ? 'nothing to clean — no files were transferred'
+            : `wiped ${wipedPaths.length} file(s): ${wipedPaths.join(', ')}`,
+      }
+    }
+
+    case 'verify_source_voting': {
+      if (opts.role !== 'source') return { ok: true, detail: 'not source — noop' }
+      // Poll up to 60s for source to reappear in the validators set
+      // and produce a recent vote. On a healthy multi-validator
+      // cluster source typically resumes voting within 10-20s of
+      // set-identity returning.
+      const deadline = nowMs() + 60_000
+      while (nowMs() < deadline) {
+        try {
+          const info = await getValidatorInfo(opts.identityPubkey ?? undefined)
+          if (info.isVoting) {
+            return {
+              ok: true,
+              detail: `source is voting again (vote_account=${info.voteAccount?.slice(0, 8) ?? 'unknown'}…)`,
+            }
+          }
+        } catch {
+          // keep polling
+        }
+        await new Promise(r => setTimeout(r, 5000))
+      }
+      return {
+        ok: false,
+        detail:
+          'source did not resume voting within 60s — operator must verify manually via `solana validators`',
+      }
+    }
+  }
 }
 
 // Re-exports so that bin.ts and external callers can pick up the error types

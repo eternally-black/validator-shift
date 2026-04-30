@@ -79,6 +79,19 @@ export const AgentLogSchema = z.object({
   message: z.string(),
 })
 
+/**
+ * Reports the outcome of a single rollback step the hub instructed via
+ * `hub:execute_rollback_step`. Failure is non-fatal at the orchestrator
+ * level (we already transitioned to FAILED) — the report is purely for
+ * the audit log so operators know which rollback actions succeeded.
+ */
+export const AgentRollbackStepCompleteSchema = z.object({
+  type: z.literal('agent:rollback_step_complete'),
+  name: z.string(),
+  ok: z.boolean(),
+  detail: z.string().optional(),
+})
+
 export const AgentMessageSchema = z.discriminatedUnion('type', [
   AgentHelloSchema,
   AgentSasConfirmedSchema,
@@ -87,6 +100,7 @@ export const AgentMessageSchema = z.discriminatedUnion('type', [
   AgentStepFailedSchema,
   AgentEncryptedPayloadSchema,
   AgentLogSchema,
+  AgentRollbackStepCompleteSchema,
 ])
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
@@ -116,6 +130,29 @@ export const HubRollbackSchema = z.object({
   type: z.literal('hub:rollback'),
 })
 
+/**
+ * Single rollback step instruction. Sent to the agent matching
+ * `executor` per step in the rollback sequence (see
+ * packages/hub/src/orchestrator/rollback.ts). The receiving agent
+ * dispatches on `name` to the matching handler.
+ *
+ * Distinct from `hub:rollback` (the broadcast "we're rolling back"
+ * notification) so agents don't have to derive the per-step assignment
+ * from the abstract signal.
+ */
+export const RollbackStepNameSchema = z.enum([
+  'restore_source_identity',
+  'readd_authorized_voter_source',
+  'remove_transferred_files_target',
+  'verify_source_voting',
+])
+
+export const HubExecuteRollbackStepSchema = z.object({
+  type: z.literal('hub:execute_rollback_step'),
+  name: RollbackStepNameSchema,
+  description: z.string(),
+})
+
 export const HubRelayPayloadSchema = z.object({
   type: z.literal('hub:relay_payload'),
   payload: z.string(),
@@ -132,6 +169,7 @@ export const HubToAgentMessageSchema = z.discriminatedUnion('type', [
   HubRunPreflightSchema,
   HubExecuteStepSchema,
   HubRollbackSchema,
+  HubExecuteRollbackStepSchema,
   HubRelayPayloadSchema,
   HubSessionCancelledSchema,
 ])

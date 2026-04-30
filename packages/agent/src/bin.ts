@@ -25,6 +25,10 @@ program
     'path for the unstaked keypair on source (optional; generated to tmp if omitted)',
   )
   .option(
+    '--vote-account-keypair <path>',
+    'path to the source vote-account authorized-voter keypair (optional). Used during rollback to re-add the authorized voter on source after restoring its staked identity. Without this flag, rollback restores set-identity but leaves authorized-voter restoration to the operator.',
+  )
+  .option(
     '--identity-pubkey <pk>',
     'base58 pubkey of the running validator (optional on source — derived from --keypair if omitted; preflight cross-checks against the running validator\'s JSON-RPC getIdentity response)',
   )
@@ -93,6 +97,7 @@ program
         ledger: String(raw.ledger),
         keypair: raw.keypair as string | undefined,
         unstakedKeypair: raw.unstakedKeypair as string | undefined,
+        voteAccountKeypair: raw.voteAccountKeypair as string | undefined,
         identityPubkey: raw.identityPubkey as string | undefined,
         skipSnapshotCheck: Boolean(raw.skipSnapshotCheck),
         yes: Boolean(raw.yes),

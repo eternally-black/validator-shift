@@ -387,14 +387,26 @@ export class SessionManager {
       room.broadcastToDashboards(dashMsg)
     })
 
-    orchestrator.on('rollback', () => {
+    orchestrator.on('rollback', (payload) => {
       const room = this.registry.get(sessionId)
       if (!room) return
-      // Tell BOTH agents to enter rollback mode; each will inspect the
-      // step list and execute only the actions assigned to its role.
-      const msg: HubToAgentMessage = { type: 'hub:rollback' }
-      room.sendToAgent('source', msg)
-      room.sendToAgent('target', msg)
+      // First broadcast the high-level "we're rolling back" signal so
+      // both agents can update UI and stop accepting new execute_step
+      // dispatches. Then send the per-step instruction to the executor.
+      const flag: HubToAgentMessage = { type: 'hub:rollback' }
+      room.sendToAgent('source', flag)
+      room.sendToAgent('target', flag)
+
+      const stepMsg: HubToAgentMessage = {
+        type: 'hub:execute_rollback_step',
+        name: payload.rollbackStep.name as
+          | 'restore_source_identity'
+          | 'readd_authorized_voter_source'
+          | 'remove_transferred_files_target'
+          | 'verify_source_voting',
+        description: payload.rollbackStep.description,
+      }
+      room.sendToAgent(payload.rollbackStep.executor, stepMsg)
     })
 
     orchestrator.on('session_complete', (summary) => {
