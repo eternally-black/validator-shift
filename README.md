@@ -40,15 +40,17 @@ For the full specification — threat model, state machine, message protocol, de
 
 ## Quick start
 
-Full walkthrough: [docs/QUICKSTART.md](./docs/QUICKSTART.md).
+On both your source and target validator hosts:
 
 ```bash
-git clone https://github.com/Eternally-black/validator-shift
-cd validator-shift
-docker-compose up -d
-# On each validator server:
-npx @validator-shift/agent --role source --session <code> --hub wss://...
+curl -sSL https://raw.githubusercontent.com/Eternally-black/validator-shift/main/scripts/install.sh | bash
 ```
+
+This installs the `validator-shift` binary to `~/.local/bin/`. The script verifies SHA-256 against the tagged GitHub Release before installing — see [scripts/install.sh](./scripts/install.sh).
+
+Then open the wizard at <https://web-production-797fb.up.railway.app/migrate> and follow the on-screen instructions. The wizard generates the exact `validator-shift agent ...` commands you paste into each host.
+
+Full walkthrough (local development, self-hosting the hub): [docs/QUICKSTART.md](./docs/QUICKSTART.md).
 
 ## Security
 

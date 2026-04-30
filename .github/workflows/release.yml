@@ -1,0 +1,76 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build standalone agent binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.1.38
+
+      - name: Install workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Compile binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist-bin
+          ENTRY=packages/agent/src/bin.ts
+
+          # Linux x64 — the primary target for validator hosts.
+          bun build "$ENTRY" --compile --target=bun-linux-x64 \
+            --outfile=dist-bin/validator-shift-linux-x64
+
+          # Linux arm64 — increasingly common on cloud-native hosts.
+          bun build "$ENTRY" --compile --target=bun-linux-arm64 \
+            --outfile=dist-bin/validator-shift-linux-arm64
+
+          # macOS — judges may run the wizard locally; not used on validators.
+          bun build "$ENTRY" --compile --target=bun-darwin-x64 \
+            --outfile=dist-bin/validator-shift-darwin-x64
+          bun build "$ENTRY" --compile --target=bun-darwin-arm64 \
+            --outfile=dist-bin/validator-shift-darwin-arm64
+
+          chmod +x dist-bin/validator-shift-*
+
+      - name: Generate SHA256SUMS
+        working-directory: dist-bin
+        run: sha256sum validator-shift-* > SHA256SUMS
+
+      - name: Show artifact sizes
+        run: ls -lh dist-bin/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist-bin/validator-shift-linux-x64
+            dist-bin/validator-shift-linux-arm64
+            dist-bin/validator-shift-darwin-x64
+            dist-bin/validator-shift-darwin-arm64
+            dist-bin/SHA256SUMS
