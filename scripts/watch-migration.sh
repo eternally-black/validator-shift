@@ -32,14 +32,18 @@ require() {
 require solana
 require jq
 
-# Best-effort discovery of this host's primary outbound IPv4. Falls back
-# gracefully on systems without `ip` (BSD/macOS).
-my_ip=$(
+# Collect ALL non-loopback IPv4 addresses on this host (one per line)
+# so we match correctly on multi-NIC setups: WSL2 (which has both an
+# internal 192.168.x.x adapter and the Tailscale 100.x.x.x adapter), VMs
+# with overlay networks, etc. Picking just one IP causes false negatives
+# when the validator binds to a different adapter than what we picked.
+my_ips=$(
   { ip -4 -o addr show scope global 2>/dev/null \
-      | awk '{print $4}' | cut -d/ -f1 | head -1; } \
-  || { hostname -I 2>/dev/null | awk '{print $1}'; } \
+      | awk '{print $4}' | cut -d/ -f1; } \
+  || { hostname -I 2>/dev/null | tr ' ' '\n'; } \
   || echo ""
 )
+my_ip_summary=$(echo "$my_ips" | paste -sd, -)
 
 GREEN='\033[32m'
 YELLOW='\033[33m'
@@ -49,7 +53,8 @@ RESET='\033[0m'
 
 trap 'printf "\n"; exit 0' INT TERM
 
-echo "Watching staked identity location via $RPC (this host: ${my_ip:-unknown})"
+echo "Watching staked identity location via $RPC"
+echo "This host's IPv4 addresses: ${my_ip_summary:-unknown}"
 echo "Press Ctrl-C to stop."
 echo
 
@@ -66,7 +71,7 @@ while true; do
       | head -1 || true)
     if [ -z "$ip" ]; then
       line="${YELLOW}${pk:0:12}… → (not in gossip yet)${RESET}"
-    elif [ "$ip" = "$my_ip" ]; then
+    elif echo "$my_ips" | grep -qFx "$ip"; then
       line="${GREEN}${pk:0:12}… → ${ip}  ✓ HERE${RESET}"
     else
       line="${YELLOW}${pk:0:12}… → ${ip}  ✗ on other host${RESET}"
