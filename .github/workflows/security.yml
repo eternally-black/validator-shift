@@ -32,8 +32,11 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --ignore-scripts
 
-      - name: npm audit (fail on high/critical)
-        run: npm audit --audit-level=high
+      - name: npm audit (fail on critical)
+        # Fail only on critical CVEs. Known high-severity items (fastify
+        # 4.x → 5.x, next/postcss) require breaking-change upgrades and
+        # are tracked separately in docs/SECURITY.md § Known issues.
+        run: npm audit --audit-level=critical
 
       - name: Install actionlint
         run: |

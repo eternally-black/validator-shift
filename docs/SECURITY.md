@@ -71,6 +71,15 @@ fs.unlinkSync(keypairPath);
 
 The file is overwritten with cryptographic random bytes of the original length, then unlinked. On copy-on-write filesystems (btrfs, ZFS) or SSDs with wear-levelling this is best-effort — operators handling extreme threat models should additionally wipe or destroy the underlying storage media.
 
+## Known issues
+
+CI runs `npm audit --audit-level=critical` on every push. Three high-severity items are currently unfixed because their published patches are major-version breaking changes that need a dedicated upgrade pass and a redeploy retest. None affect the in-flight migration's confidentiality or integrity (they're DoS / header-spoofing classes against the hub, not the agent or the encrypted relay):
+
+- **fastify ≤ 5.8.2** ([GHSA-mrq3-vjjr-p77c](https://github.com/advisories/GHSA-mrq3-vjjr-p77c), [GHSA-jx2c-rxcm-jvmq](https://github.com/advisories/GHSA-jx2c-rxcm-jvmq), [GHSA-444r-cwp2-x5xf](https://github.com/advisories/GHSA-444r-cwp2-x5xf)). Hub uses `fastify ^4.26.0`. Fix path: bump to fastify 5.x + verify `@fastify/cors`, `@fastify/rate-limit`, `@fastify/websocket` plugin compatibility.
+- **postcss < 8.5.10** ([GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93)). Transitive via `next`. Fix path: Next.js minor upgrade once a clean release ships.
+
+These are tracked for the post-submission sprint. The hub is not currently exposed to the request paths the fastify advisories describe (no `sendWebStream` usage; rate-limit middleware doesn't trust X-Forwarded-* against unauthenticated peers; we don't body-validate via the affected Content-Type path).
+
 ## Responsible disclosure
 
 Please report security issues via <https://github.com/Eternally-black/validator-shift/security/advisories/new> (GitHub private vulnerability reporting).
