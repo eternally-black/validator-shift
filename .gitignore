@@ -19,5 +19,5 @@ scripts/setup-wsl-2.sh
 scripts/setup-laptop.sh
 SOLSHIFT_Architecture.md
 SPEC.md
-SUBMISSION.md
+/SUBMISSION.md
 docs/HANDOFF-WINDOWS-CC.md
