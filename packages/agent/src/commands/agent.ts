@@ -54,7 +54,7 @@ import {
   printError,
   printLog,
 } from '../ui/terminal.js'
-import { redactSecrets } from '@validator-shift/shared/redact'
+import { redactSecrets, sanitizeErrorMessage } from '@validator-shift/shared/redact'
 
 export interface AgentOpts {
   role: AgentRole
@@ -126,13 +126,23 @@ function sha256Hex(data: Uint8Array | Buffer): string {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message
-  if (typeof err === 'string') return err
-  try {
-    return JSON.stringify(err)
-  } catch {
-    return String(err)
+  // Extract a raw string from whatever the throw site gave us, then run
+  // it through the shared sanitizer (first-line, ≤200 chars, refused if
+  // it contains a long-token run that the regex layer might miss). Done
+  // here — at the boundary between thrown values and log payloads —
+  // means downstream `logBoth` / `client.send({ type: 'agent:log_failed' })`
+  // never touches an unsanitized error string.
+  let raw: string
+  if (err instanceof Error) raw = err.message
+  else if (typeof err === 'string') raw = err
+  else {
+    try {
+      raw = JSON.stringify(err)
+    } catch {
+      raw = String(err)
+    }
   }
+  return sanitizeErrorMessage(raw)
 }
 
 function logBoth(client: HubClient, level: 'info' | 'warn' | 'error', message: string): void {
