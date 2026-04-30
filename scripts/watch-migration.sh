@@ -78,6 +78,6 @@ while true; do
     fi
   fi
 
-  printf "\033[2K\r%b  ${DIM}[%s]${RESET}" "$line" "$(date +%H:%M:%S)"
+  printf "%b  ${DIM}[%s]${RESET}\n" "$line" "$(date +%H:%M:%S)"
   sleep 1
 done
