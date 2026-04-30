@@ -11,7 +11,7 @@
 | **Wizard** | <https://web-production-797fb.up.railway.app/migrate> |
 | **Hub API** | <https://hub-production-88a0.up.railway.app> |
 | **Source repo** | <https://github.com/eternally-black/validator-shift> |
-| **Releases** | <https://github.com/eternally-black/validator-shift/releases> (v0.1.1, signed SHA-256 sums) |
+| **Releases** | <https://github.com/eternally-black/validator-shift/releases> (v0.2.0, signed SHA-256 sums) |
 | **Install (validator host)** | `curl -sSL https://raw.githubusercontent.com/eternally-black/validator-shift/main/scripts/install.sh \| bash` |
 
 Both services are deployed to Railway and auto-redeploy on every push to `main`. The live wizard talks to the live hub end-to-end — no further setup required to evaluate.
@@ -20,9 +20,9 @@ Both services are deployed to Railway and auto-redeploy on every push to `main`.
 
 ## Demo video
 
-[link will be inserted on submission day]
+<https://youtu.be/k3-kZsXmTy4>
 
-The recording demonstrates a full end-to-end migration on a 2-node testnet localnet:
+The recording demonstrates a full end-to-end migration on a 2-node localnet:
 
 1. Operator opens the wizard, fills 2 fields (ledger + keypair path), continues.
 2. Wizard generates two ready-to-paste `validator-shift agent ...` commands per role.
