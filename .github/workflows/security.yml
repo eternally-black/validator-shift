@@ -77,4 +77,5 @@ jobs:
           chmod +x osv-scanner
 
       - name: Run osv-scanner
-        run: ./osv-scanner --recursive --skip-git ./
+        # v2 uses subcommand syntax (`scan source`) and dropped --skip-git.
+        run: ./osv-scanner scan source --recursive ./
