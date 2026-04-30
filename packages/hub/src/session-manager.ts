@@ -220,6 +220,9 @@ export class SessionManager {
       case 'agent:hello':
         orchestrator.onAgentConnected(role)
         return
+      case 'agent:sas_announcement':
+        this.handleSasAnnouncement(sessionId, role, msg.sas)
+        return
       case 'agent:sas_confirmed':
         orchestrator.onSasConfirmed(role)
         return
@@ -281,6 +284,62 @@ export class SessionManager {
    */
   getCurrentStep(sessionId: string): number {
     return this.getOrRevive(sessionId)?.currentStep ?? 0
+  }
+
+  /**
+   * Per-session SAS state. Each agent sends its locally-derived SAS
+   * once during pairing; we wait for both before broadcasting to
+   * dashboards. If they differ, that itself is a security signal —
+   * we still broadcast both with `matches=false` so the wizard can
+   * surface a red MITM warning to the operator.
+   */
+  private readonly sasAnnouncements: Map<
+    string,
+    { source?: string; target?: string; broadcast?: boolean }
+  > = new Map()
+
+  /**
+   * Capture an agent:sas_announcement; broadcast `dashboard:sas` once
+   * BOTH agents have announced. Subsequent announcements within the
+   * same session are ignored — this is a one-shot.
+   */
+  private handleSasAnnouncement(
+    sessionId: string,
+    role: AgentRole,
+    sas: string,
+  ): void {
+    const room = this.registry.get(sessionId)
+    if (!room) return
+    let entry = this.sasAnnouncements.get(sessionId)
+    if (!entry) {
+      entry = {}
+      this.sasAnnouncements.set(sessionId, entry)
+    }
+    if (entry.broadcast) return
+    if (role === 'source') entry.source = sas
+    else entry.target = sas
+    if (entry.source && entry.target) {
+      const matches = entry.source === entry.target
+      const dashMsg: HubToDashboardMessage = {
+        type: 'dashboard:sas',
+        sourceSas: entry.source,
+        targetSas: entry.target,
+        matches,
+      }
+      room.broadcastToDashboards(dashMsg)
+      if (!matches) {
+        const alertMsg: HubToDashboardMessage = {
+          type: 'dashboard:log',
+          agent: 'source',
+          level: 'error',
+          message:
+            'CRITICAL: SAS mismatch between agents — possible MITM at hub or relay layer. Operator must abort.',
+          ts: Date.now(),
+        }
+        room.broadcastToDashboards(alertMsg)
+      }
+      entry.broadcast = true
+    }
   }
 
   /**

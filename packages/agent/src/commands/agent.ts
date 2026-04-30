@@ -239,6 +239,13 @@ export async function runAgent(opts: AgentOpts): Promise<void> {
   sessionKey = deriveSessionKey(shared, 'validator-shift-session-v1')
   const sas = deriveSAS(shared)
 
+  // Announce our SAS to the hub so it can broadcast both agents' values
+  // to dashboards as a third visual compare point (alongside the two
+  // terminals). Send BEFORE the operator confirmation prompt so the
+  // wizard can render the SAS card while the operator is still
+  // comparing the two terminals.
+  client.send({ type: 'agent:sas_announcement', sas })
+
   const confirmed = await confirmSAS(sas)
   if (!confirmed) {
     logBoth(client, 'error', 'SAS mismatch')

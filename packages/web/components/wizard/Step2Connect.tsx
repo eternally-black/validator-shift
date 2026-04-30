@@ -57,6 +57,7 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
   const targetConnected = useSessionStore((s) => s.agents.target.connected)
   const state = useSessionStore((s) => s.state)
   const sas = useSessionStore((s) => s.sas)
+  const sasMatches = useSessionStore((s) => s.sasMatches)
 
   // Auto-advance once both agents have confirmed SAS in their terminals and
   // the orchestrator has moved past PAIRING. Without this, the wizard waits
@@ -93,7 +94,15 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
     )
   }
 
-  const showSas = state === MigrationState.PAIRING && sas !== null
+  // SAS card surfaces the moment hub broadcasts dashboard:sas (which it
+  // does once both agents have announced). Stays visible through PAIRING
+  // and PREFLIGHT so the operator can compare even if the orchestrator
+  // raced ahead while they were checking their terminals.
+  const showSas =
+    sas !== null &&
+    (state === MigrationState.PAIRING ||
+      state === MigrationState.PREFLIGHT ||
+      state === MigrationState.AWAITING_WINDOW)
 
   return (
     <div className="flex flex-col gap-6">
@@ -193,20 +202,44 @@ export function Step2Connect({ onNext, onBack }: Step2Props) {
             <h2 className="text-sm font-mono uppercase tracking-wider text-neutral-400">
               SAS Verification
             </h2>
-            <p className="text-sm text-neutral-400">
-              Confirm the code below matches what is shown on both agent terminals.
-            </p>
-            <div className="rounded border border-emerald-700/40 bg-black/60 px-6 py-8 text-center font-mono text-3xl tracking-[0.4em] text-emerald-400">
-              {sas}
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="primary" onClick={handleMatch}>
-                Match — Continue
-              </Button>
-              <Button variant="danger" onClick={handleMismatch}>
-                Mismatch — Abort
-              </Button>
-            </div>
+            {sasMatches === false ? (
+              <>
+                <p className="text-sm text-red-400">
+                  ⚠ <strong>Critical:</strong> source and target derived
+                  different SAS values. This indicates a man-in-the-middle
+                  somewhere in the relay path. Abort immediately and
+                  investigate before retrying.
+                </p>
+                <div className="rounded border border-red-900/60 bg-red-950/30 px-6 py-8 text-center font-mono text-2xl tracking-[0.3em] text-red-300">
+                  MISMATCH
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="danger" onClick={handleMismatch}>
+                    Abort
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-neutral-400">
+                  Both agents derived the SAS below from the X25519 shared
+                  secret. Confirm it matches what each terminal shows. A
+                  mismatch in any of the three displays means a MITM is
+                  active on one of the relay legs.
+                </p>
+                <div className="rounded border border-emerald-700/40 bg-black/60 px-6 py-8 text-center font-mono text-4xl tracking-[0.4em] text-emerald-400">
+                  {sas}
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="primary" onClick={handleMatch}>
+                    Matches all three terminals
+                  </Button>
+                  <Button variant="danger" onClick={handleMismatch}>
+                    Does not match — abort
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </Card>
       )}

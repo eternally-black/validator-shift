@@ -56,6 +56,12 @@ export interface SessionStoreState {
   steps: StepProgress[]
   logs: LogEntry[]
   sas: string | null
+  /**
+   * `true` when source and target SAS values were equal at the moment
+   * of announcement. `false` indicates a MITM scenario — wizard should
+   * render a critical warning. `null` until the SAS card is populated.
+   */
+  sasMatches: boolean | null
   lastError: string | null
   connection: ConnectionStatus
   summary: MigrationSummary | null
@@ -82,6 +88,7 @@ export interface SessionStoreState {
   updateStep: (step: StepProgress) => void
   appendLog: (entry: LogEntry) => void
   setSas: (sas: string | null) => void
+  setSasMatches: (matches: boolean | null) => void
   setError: (error: string | null) => void
   setConnection: (status: ConnectionStatus) => void
   setSummary: (summary: MigrationSummary | null) => void
@@ -108,6 +115,7 @@ const initialState = (): Omit<
   | 'updateStep'
   | 'appendLog'
   | 'setSas'
+  | 'setSasMatches'
   | 'setError'
   | 'setConnection'
   | 'setSummary'
@@ -123,6 +131,7 @@ const initialState = (): Omit<
   steps: [],
   logs: [],
   sas: null,
+  sasMatches: null,
   lastError: null,
   connection: 'closed',
   summary: null,
@@ -174,6 +183,8 @@ export const useSessionStore: UseBoundStore<StoreApi<SessionStoreState>> =
       }),
 
     setSas: (sas) => set({ sas }),
+
+    setSasMatches: (sasMatches) => set({ sasMatches }),
 
     setError: (error) => set({ lastError: error }),
 
@@ -259,6 +270,18 @@ export function wireClientToStore(
       case 'dashboard:migration_complete':
         st.setSummary(msg.summary)
         st.setState(MigrationState.COMPLETE)
+        break
+      case 'dashboard:sas':
+        // Both agents announced; the hub broadcasts both values plus a
+        // pre-computed `matches` flag. Wizard renders the SAS card and
+        // surfaces a red MITM warning when matches is false.
+        st.setSas(msg.sourceSas)
+        st.setSasMatches(msg.matches)
+        if (!msg.matches) {
+          st.setError(
+            `SAS mismatch: source=${msg.sourceSas} target=${msg.targetSas} — possible MITM`,
+          )
+        }
         break
       default: {
         // Exhaustiveness check.

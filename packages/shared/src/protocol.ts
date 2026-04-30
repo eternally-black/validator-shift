@@ -92,6 +92,23 @@ export const AgentRollbackStepCompleteSchema = z.object({
   detail: z.string().optional(),
 })
 
+/**
+ * Announces this agent's locally-derived SAS to the hub immediately
+ * after deriveSAS, BEFORE the operator confirms in the terminal.
+ *
+ * SAS is a 20-bit value derived from the X25519 shared secret via
+ * HKDF-SHA256. Knowing it does not weaken the underlying shared
+ * secret (HKDF is one-way), so transmitting it through the hub for
+ * dashboard display is safe. The hub forwards both agents' SAS to
+ * dashboards as a third visual compare point — the operator now has
+ * three terminals to cross-check (source TTY, target TTY, wizard
+ * card) instead of two, which strictly improves MITM detection.
+ */
+export const AgentSasAnnouncementSchema = z.object({
+  type: z.literal('agent:sas_announcement'),
+  sas: z.string(),
+})
+
 export const AgentMessageSchema = z.discriminatedUnion('type', [
   AgentHelloSchema,
   AgentSasConfirmedSchema,
@@ -101,6 +118,7 @@ export const AgentMessageSchema = z.discriminatedUnion('type', [
   AgentEncryptedPayloadSchema,
   AgentLogSchema,
   AgentRollbackStepCompleteSchema,
+  AgentSasAnnouncementSchema,
 ])
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
@@ -214,6 +232,25 @@ export const DashboardMigrationCompleteSchema = z.object({
   summary: MigrationSummarySchema,
 })
 
+/**
+ * Both agents' locally-derived SAS values, broadcast to dashboards as
+ * a third visual compare point. The operator cross-checks all three
+ * displays (source TTY, target TTY, wizard card) — any divergence
+ * indicates a MITM attack at the hub or relay layer.
+ *
+ * Hub fires this message exactly once per session, after both agents
+ * have sent agent:sas_announcement. If the two values differ, the hub
+ * surfaces a critical_alert log line in addition to broadcasting them
+ * — a divergence at this layer means the hub itself (or a network
+ * intermediary) is presenting different ephemeral keys to each agent.
+ */
+export const DashboardSasSchema = z.object({
+  type: z.literal('dashboard:sas'),
+  sourceSas: z.string(),
+  targetSas: z.string(),
+  matches: z.boolean(),
+})
+
 export const HubToDashboardMessageSchema = z.discriminatedUnion('type', [
   DashboardStateChangeSchema,
   DashboardAgentsStatusSchema,
@@ -221,6 +258,7 @@ export const HubToDashboardMessageSchema = z.discriminatedUnion('type', [
   DashboardStepProgressSchema,
   DashboardLogSchema,
   DashboardMigrationCompleteSchema,
+  DashboardSasSchema,
 ])
 
 export type HubToDashboardMessage = z.infer<typeof HubToDashboardMessageSchema>
